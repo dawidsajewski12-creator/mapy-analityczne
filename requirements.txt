@@ -1,0 +1,6 @@
+rasterio
+geopandas
+numpy
+matplotlib
+numba
+gdal
