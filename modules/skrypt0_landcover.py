@@ -18,9 +18,6 @@ import matplotlib.colors as mcolors
 from matplotlib.patches import Patch
 from google.colab import drive
 
-# --- 1. KONFIGURACJA ---
-print("Montowanie Dysku Google...")
-drive.mount('/content/drive', force_remount=True)
 
 # Ścieżki wejściowe
 BASE_PATH = '/content/drive/MyDrive/ProjektGIS'
@@ -114,3 +111,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
