@@ -10,22 +10,28 @@
         body { margin: 0; padding: 0; font-family: sans-serif; }
         #map { position: absolute; top: 0; bottom: 0; width: 100%; }
         
-        /* === NOWY BLOK: Style dla legendy === */
+        /* === ULEPSZONE STYLE DLA LEGENDY === */
         .legend {
-            padding: 6px 8px;
-            background: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.85);
             box-shadow: 0 0 15px rgba(0, 0, 0, 0.2);
             border-radius: 5px;
-            line-height: 18px;
+            line-height: 24px; /* Zwiększony odstęp */
             color: #333;
+            width: 220px; /* Stała szerokość dla estetyki */
         }
         .legend i {
             width: 18px;
             height: 18px;
             float: left;
             margin-right: 8px;
-            opacity: 0.9;
             border: 1px solid rgba(0, 0, 0, 0.5);
+            display: inline-block;
+            vertical-align: middle; /* Wyrównanie w pionie */
+        }
+        .legend span {
+            display: inline-block;
+            vertical-align: middle; /* Wyrównanie w pionie */
         }
     </style>
 </head>
@@ -38,46 +44,56 @@
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
     }).addTo(map);
 
+    // Definicje warstw analitycznych
     var landcoverLayer = L.tileLayer('./wyniki/kafelki/landcover/{z}/{x}/{y}.png', {
         tms: true, opacity: 0.8, attribution: 'Pokrycie Terenu'
     });
-    // (Tutaj możesz dodać definicje innych warstw, np. wiatru, podtopień)
 
     var baseMaps = {"OpenStreetMap": osm};
     var overlayMaps = { "Pokrycie Terenu": landcoverLayer };
 
     L.control.layers(baseMaps, overlayMaps).addTo(map);
-    landcoverLayer.addTo(map);
 
-    // === NOWY BLOK: Logika tworzenia legendy ===
+    // === NOWA, DYNAMICZNA LOGIKA LEGENDY ===
+    
+    // 1. Stwórz obiekt legendy, ale jeszcze go nie dodawaj
     var legend = L.control({position: 'bottomright'});
-
+    
+    // 2. Zdefiniuj zawartość HTML legendy
     legend.onAdd = function (map) {
         var div = L.DomUtil.create('div', 'info legend');
         var labels = ['<strong>Pokrycie Terenu</strong>'];
-        
-        // Definicja klas zgodna z naszym skryptem
         var categories = {
-            'Nawierzchnie utwardzone': '#A9A9A9',
-            'Budynki': '#DC143C',
-            'Drzewa / Lasy': '#228B22',
-            'Trawa / Tereny zielone': '#7CFC00',
-            'Gleba / Nieużytki': '#D2B48C',
-            'Woda': '#1E90FF'
+            'Nawierzchnie utwardzone': '#A9A9A9', 'Budynki': '#DC143C',
+            'Drzewa / Lasy': '#228B22', 'Trawa / Tereny zielone': '#7CFC00',
+            'Gleba / Nieużytki': '#D2B48C', 'Woda': '#1E90FF'
         };
 
         for (var key in categories) {
-            div.innerHTML += 
-                labels.push(
-                    '<i style="background:' + categories[key] + '"></i> ' + key
-                );
+            labels.push('<i style="background:' + categories[key] + '"></i> <span>' + key + '</span>');
         }
         div.innerHTML = labels.join('<br>');
         return div;
     };
 
+    // 3. Stwórz logikę dynamicznego pokazywania/ukrywania
+    map.on('overlayadd', function (eventLayer) {
+        // Pokaż legendę, gdy warstwa "Pokrycie Terenu" jest włączona
+        if (eventLayer.name === 'Pokrycie Terenu') {
+            legend.addTo(this);
+        }
+    });
+
+    map.on('overlayremove', function (eventLayer) {
+        // Ukryj legendę, gdy warstwa "Pokrycie Terenu" jest wyłączona
+        if (eventLayer.name === 'Pokrycie Terenu') {
+            this.removeControl(legend);
+        }
+    });
+    
+    // Domyślnie włącz warstwę i jej legendę
+    landcoverLayer.addTo(map);
     legend.addTo(map);
-    // ===========================================
 
 </script>
 </body>
