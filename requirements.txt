@@ -1,6 +1,10 @@
 rasterio
 geopandas
-numpy
-matplotlib
 numba
+matplotlib
+scikit-image
+laspy[lazrs]
+pysolar
+pytz
+requests
 gdal
