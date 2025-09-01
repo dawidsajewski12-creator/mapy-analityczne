@@ -1,91 +1,130 @@
-# /modules/skrypt0_landcover.py
+# -*- coding: utf-8 -*-
+"""
+FINALNY PIPELINE (v3.5): Ostateczny, Poprawiony Skrypt Sterujący
+
+Opis:
+- Naprawiono błąd `KeyError` poprzez zapewnienie, że pełna i poprawna
+  konfiguracja jest tworzona i przekazywana do każdego modułu analitycznego.
+- Zintegrowano wszystkie najlepsze praktyki, w tym generowanie
+  kolorowych kafelków RGBA dla poprawnej wizualizacji.
+"""
 import os
-import zipfile
-import json
-import numpy as np
+import sys
+import subprocess
+from datetime import datetime
 import rasterio
-from rasterio.features import rasterize
-from rasterio.warp import reproject, Resampling
+import numpy as np
 import geopandas as gpd
+from google.colab import userdata, drive, output
 
-def find_and_extract_bdot_layers(zip_path, target_filenames, extract_folder):
-    """Przeszukuje archiwum ZIP i ekstraktuje warstwy."""
-    if not os.path.exists(extract_folder): os.makedirs(extract_folder)
-    extracted_paths = []
-    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-        for member in zip_ref.infolist():
-            if not member.is_dir() and any(target in os.path.basename(member.filename) for target in target_filenames):
-                source = zip_ref.open(member)
-                target_path = os.path.join(extract_folder, os.path.basename(member.filename))
-                with open(target_path, "wb") as f: f.write(source.read())
-                extracted_paths.append(target_path)
-    return extracted_paths
+# --- 1. KONFIGURACJA GŁÓWNA ---
+#@title Konfiguracja Projektu i Analizy
+#@markdown ### 1. Ustawienia GitHub
+GITHUB_USERNAME = "dawidsajewski12-creator" #@param {type:"string"}
+GITHUB_REPONAME = "mapy-analityczne" #@param {type:"string"}
 
-def calculate_and_save_stats(raster_path, stats_path, legend_map):
-    """Oblicza statystyki pokrycia terenu i zapisuje je do pliku JSON."""
-    print(f"-> Obliczanie statystyk z: {os.path.basename(raster_path)}")
-    with rasterio.open(raster_path) as src:
-        data = src.read(1)
+#@markdown ---
+#@markdown ### 2. Wybierz Analizę do Uruchomienia
+ANALIZA_DO_URUCHOMIENIA = "landcover"  #@param ["landcover"]
+
+# Definicja legendy (centralne miejsce)
+LEGEND_MAP = {
+    1: {'name': 'Nawierzchnie utwardzone', 'color': (169, 169, 169)},
+    2: {'name': 'Budynki', 'color': (220, 20, 60)},
+    3: {'name': 'Drzewa / Lasy', 'color': (34, 139, 34)},
+    5: {'name': 'Trawa / Tereny zielone', 'color': (124, 252, 0)},
+    6: {'name': 'Gleba / Nieużytki', 'color': (210, 180, 140)},
+    7: {'name': 'Woda', 'color': (30, 144, 255)}
+}
+
+# --- FUNKCJE POMOCNICZE ---
+def create_rgba_raster(input_raster_path, output_raster_path, legend_map):
+    print(f"-> Tworzenie kolorowego rastra RGBA: {os.path.basename(output_raster_path)}")
+    with rasterio.open(input_raster_path) as src:
+        data = src.read(1); profile = src.profile.copy()
+    rgba_raster = np.zeros((4, data.shape[0], data.shape[1]), dtype=np.uint8)
+    for class_id, info in legend_map.items():
+        mask = data == class_id
+        rgba_raster[0][mask] = info['color'][0]; rgba_raster[1][mask] = info['color'][1]
+        rgba_raster[2][mask] = info['color'][2]; rgba_raster[3][mask] = 255
+    profile.update(count=4, dtype='uint8', nodata=None)
+    with rasterio.open(output_raster_path, 'w', **profile) as dst:
+        dst.write(rgba_raster)
+    return output_raster_path
+
+def generate_tiles(input_raster, output_folder, zoom_levels='11-16'):
+    if not os.path.exists(input_raster): print(f"BŁĄD: Plik wejściowy nie istnieje: {input_raster}"); return
+    print(f"-> Generowanie kafelków dla: {os.path.basename(input_raster)}")
+    if os.path.exists(output_folder): import shutil; shutil.rmtree(output_folder)
+    os.makedirs(output_folder)
+    try:
+        with rasterio.open(input_raster) as src: crs_string = src.crs.to_string()
+        command = ['gdal2tiles.py', '--profile', 'mercator', '-z', zoom_levels, '-w', 'none', '--s_srs', crs_string, input_raster, output_folder]
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
+    except Exception as e:
+        print(f"BŁĄD podczas generowania kafelków: {e}")
+        if hasattr(e, 'stderr'): print(e.stderr)
+
+def run_master_pipeline():
+    try: GITHUB_TOKEN = userdata.get('GITHUB_TOKEN')
+    except: raise Exception("Nie znaleziono sekretu 'GITHUB_TOKEN'.")
     
-    class_ids, counts = np.unique(data, return_counts=True)
-    total_pixels = np.sum(counts[class_ids != 0])
-    if total_pixels == 0: total_pixels = 1 # Uniknięcie dzielenia przez zero
-
-    stats_data = {}
-    for class_id, count in zip(class_ids, counts):
-        if class_id == 0 or class_id not in legend_map:
-            continue
-        
-        percentage = (count / total_pixels) * 100
-        class_name = legend_map[class_id]['name']
-        stats_data[class_name] = round(percentage, 2)
-        
-    with open(stats_path, 'w', encoding='utf-8') as f:
-        json.dump(stats_data, f, ensure_ascii=False, indent=4)
-    print(f"-> Zapisano statystyki do: {stats_path}")
-
-def run_landcover_analysis(config):
-    """Główna funkcja modułu, tworzy raster landcover.tif i statystyki."""
-    print("\n--- Uruchamianie Skryptu 0: Tworzenie Pokrycia Terenu ---")
-    paths = config['paths']
-    params = config['params']
-
-    # Krok 1: Przygotowanie siatki na podstawie NMT
-    with rasterio.open(paths['nmt']) as src_nmt:
-        base_profile = src_nmt.profile.copy() # Używamy kopii, aby nie modyfikować oryginału
-        scale_factor = base_profile['transform'].a / params['target_res']
-        ny = int(src_nmt.height * scale_factor)
-        nx = int(src_nmt.width * scale_factor)
-        transform = base_profile['transform'] * base_profile['transform'].scale(1/scale_factor, 1/scale_factor)
-
-    # Krok 2: Stworzenie rastra landcover.tif
-    print("-> Przetwarzanie danych BDOT...")
-    landcover_raster = np.zeros((ny, nx), dtype=np.uint8)
-    landcover_paths = find_and_extract_bdot_layers(paths['bdot_zip'], params['target_landcover_files'], paths['bdot_extract'])
+    drive.mount('/content/drive', force_remount=True)
+    print("Rozpoczynanie procesu automatycznej aktualizacji...")
+    local_repo_path = f"/content/{GITHUB_REPONAME}"
+    if os.path.exists(local_repo_path):
+        import shutil; shutil.rmtree(local_repo_path)
     
-    if landcover_paths:
-        for fpath in landcover_paths:
-            code = next((key for key in params['classification_map'] if key in os.path.basename(fpath)), None)
-            if code:
-                class_id, _ = params['classification_map'][code]
-                gdf = gpd.read_file(fpath)
-                if gdf.crs != base_profile['crs']: gdf = gdf.to_crs(base_profile['crs'])
-                geometries = [(geom, class_id) for geom in gdf.geometry]
-                class_mask = rasterize(shapes=geometries, out_shape=(ny, nx), transform=transform, fill=0, dtype=np.uint8)
-                landcover_raster[class_mask > 0] = class_mask[class_mask > 0]
+    print(f"-> Klonowanie repozytorium '{GITHUB_REPONAME}'...")
+    repo_url = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_USERNAME}/{GITHUB_REPONAME}.git"
+    subprocess.run(['git', 'clone', repo_url, local_repo_path], check=True)
+    os.chdir(local_repo_path)
+    subprocess.run(['git', 'config', '--global', 'user.name', GITHUB_USERNAME])
+    subprocess.run(['git', 'config', '--global', 'user.email', f'{GITHUB_USERNAME}@users.noreply.github.com'])
+    output.clear(); print("-> Repozytorium sklonowane i skonfigurowane pomyślnie.")
     
-    # Krok 3: Zapis rastra z poprawnym profilem
-    output_path = paths['output_landcover_raster']
-    # Przygotuj profil specjalnie dla tego rastra
-    out_profile = base_profile.copy()
-    out_profile.update(height=ny, width=nx, transform=transform, dtype='uint8', nodata=0, compress='lzw')
+    sys.path.insert(0, local_repo_path)
+    from modules import skrypt0_landcover
+
+    # ### POPRAWKA: Tworzymy jeden, kompletny słownik CONFIG ###
+    CONFIG = {
+        "paths": {
+            "nmt": "/content/drive/MyDrive/ProjektGIS/dane/nmt.tif",
+            "bdot_zip": "/content/drive/MyDrive/ProjektGIS/dane/bdot10k.zip",
+            "bdot_extract": os.path.join(local_repo_path, "wyniki/bdot_extracted"),
+            "output_landcover_raster": os.path.join(local_repo_path, "wyniki/rastry/landcover.tif"),
+            "output_landcover_rgba_raster": os.path.join(local_repo_path, "wyniki/rastry/landcover_rgba.tif"),
+            "output_landcover_tiles": os.path.join(local_repo_path, "wyniki/kafelki/landcover"),
+            "output_landcover_stats": os.path.join(local_repo_path, "wyniki/landcover_stats.json")
+        },
+        "params": {
+            "target_res": 2.0,
+            "target_landcover_files": ["PTTR_A", "PTRK_A", "PTPL_A", "PTUT_A", "PTKM_A", "PTZB_A", "PTLZ_A", "PTGN_A", "PTNZ_A", "PTWP_A", "PTWZ_A"],
+            "classification_map": { "OT_PTRK_A": (1, "Paved"), "OT_PTPL_A": (1, "Paved"), "OT_PTUT_A": (1, "Paved"), "OT_PTKM_A": (1, "Paved"), "OT_PTZB_A": (2, "Buildings"), "OT_PTLZ_A": (3, "Trees"), "OT_PTTR_A": (5, "Grass"), "OT_PTGN_A": (5, "Grass"), "OT_PTNZ_A": (6, "Bare soil"), "OT_PTWP_A": (7, "Water"), "OT_PTWZ_A": (7, "Water") },
+            "legend_map": LEGEND_MAP
+        }
+    }
     
-    with rasterio.open(output_path, 'w', **out_profile) as dst:
-        dst.write(landcover_raster, 1)
-    print(f"-> Zapisano raster pokrycia terenu: {output_path}")
+    # Upewniamy się, że foldery wyjściowe istnieją
+    for path in CONFIG['paths'].values():
+        if isinstance(path, str) and 'wyniki' in path:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+    
+    # === URUCHOMIENIE ANALIZY TESTOWEJ ===
+    if ANALIZA_DO_URUCHOMIENIA == "landcover":
+        class_raster_path = skrypt0_landcover.run_landcover_analysis(CONFIG)
+        color_raster_path = create_rgba_raster(class_raster_path, CONFIG['paths']['output_landcover_rgba_raster'], LEGEND_MAP)
+        generate_tiles(color_raster_path, CONFIG['paths']['output_landcover_tiles'])
+    # W przyszłości dodamy tu `elif ANALIZA_DO_URUCHOMIENIA == "wiatr": ...` itd.
 
-    # Krok 4: Automatyczne obliczanie i zapis statystyk
-    calculate_and_save_stats(output_path, paths['output_landcover_stats'], params['legend_map'])
+    # === AUTOMATYCZNY COMMIT I PUSH ===
+    print("\n-> Wysyłanie zaktualizowanych wyników na GitHub...")
+    subprocess.run(['git', 'add', 'wyniki/'])
+    commit_message = f"Automatyczna aktualizacja: {ANALIZA_DO_URUCHOMIENIA} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    subprocess.run(['git', 'commit', '-m', commit_message])
+    subprocess.run(['git', 'push'])
+    output.clear()
+    print("✅ Zakończono proces! Zmiany zostały wysłane na GitHub.")
 
-    print("--- Skrypt 0 zakończony pomyślnie ---")
-    return output_path
+# Uruchomienie
+run_master_pipeline()
