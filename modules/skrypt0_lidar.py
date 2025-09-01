@@ -107,4 +107,4 @@ def main(config):
         print(f"  -> Inwentaryzacja zakończona. Zapisano {len(gdf)} drzew.")
     
     print("--- Skrypt 0 zakończony ---")
-    return True
+    return paths['output_crowns_raster'], paths['output_trees_vector']
