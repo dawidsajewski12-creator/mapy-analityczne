@@ -69,7 +69,7 @@ def run_master_pipeline():
     try: GITHUB_TOKEN = userdata.get('GITHUB_TOKEN')
     except: raise Exception("Nie znaleziono sekretu 'GITHUB_TOKEN'.")
     
-    drive.mount('/content/drive', force_remount=True)
+
     print("Rozpoczynanie procesu automatycznej aktualizacji...")
     local_repo_path = f"/content/{GITHUB_REPONAME}"
     if os.path.exists(local_repo_path):
@@ -128,3 +128,4 @@ def run_master_pipeline():
 
 # Uruchomienie
 run_master_pipeline()
+
