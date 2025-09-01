@@ -6,37 +6,135 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> 
     <style>
-        body { margin: 0; padding: 0; font-family: sans-serif; }
-        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
-        
-        /* === ULEPSZONE STYLE DLA LEGENDY === */
-        .legend {
-            padding: 10px;
-            background: rgba(255, 255, 255, 0.85);
-            box-shadow: 0 0 15px rgba(0, 0, 0, 0.2);
-            border-radius: 5px;
-            line-height: 24px; /* Zwiększony odstęp */
+        body { 
+            margin: 0; 
+            padding: 0; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex; /* Używamy Flexboxa do podziału strony */
+            height: 100vh; /* Strona zajmuje całą wysokość widoku */
+            overflow: hidden; /* Zapobiega przewijaniu całego body */
+            background-color: #f0f2f5; /* Delikatne tło */
+        }
+        #map-container {
+            flex: 2; /* Mapa zajmuje 2/3 szerokości */
+            position: relative;
+            box-shadow: 2px 0 8px rgba(0,0,0,0.1); /* Delikatny cień */
+            z-index: 1; /* Upewniamy się, że mapa jest na wierzchu */
+        }
+        #map { 
+            height: 100%; 
+            width: 100%; 
+            border-radius: 0 8px 8px 0; /* Zaokrąglone rogi po prawej */
+            overflow: hidden; /* Wygładzenie zaokrąglonych rogów */
+        }
+        #dashboard-panel {
+            flex: 1; /* Panel statystyk zajmuje 1/3 szerokości */
+            padding: 20px;
+            background-color: #ffffff;
+            overflow-y: auto; /* Pozwala na przewijanie statystyk, jeśli jest ich dużo */
+            box-shadow: -2px 0 8px rgba(0,0,0,0.05); /* Delikatny cień */
+            display: flex;
+            flex-direction: column;
+        }
+        .panel-section {
+            background-color: #fdfdfd;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .panel-section h3 {
+            margin-top: 0;
             color: #333;
-            width: 220px; /* Stała szerokość dla estetyki */
+            font-size: 1.2em;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+        }
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px dashed #eee;
+        }
+        .stat-item:last-child {
+            border-bottom: none;
+        }
+        .stat-label {
+            font-weight: bold;
+            color: #555;
+        }
+        .stat-value {
+            color: #007bff;
+        }
+
+        /* Style dla legendy (dostosowane do nowego layoutu) */
+        .leaflet-control-container .leaflet-bottomright .info.legend {
+            margin-right: 15px; /* Odsuń legendę od krawędzi panelu */
+            margin-bottom: 15px; /* Odsuń legendę od dolnej krawędzi */
+            max-width: 200px;
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 8px;
+            padding: 10px 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            line-height: 22px;
+            font-size: 0.9em;
         }
         .legend i {
             width: 18px;
             height: 18px;
             float: left;
             margin-right: 8px;
-            border: 1px solid rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(0, 0, 0, 0.4);
             display: inline-block;
-            vertical-align: middle; /* Wyrównanie w pionie */
+            vertical-align: middle;
+            border-radius: 3px; /* Lekko zaokrąglone kwadraty */
         }
         .legend span {
             display: inline-block;
-            vertical-align: middle; /* Wyrównanie w pionie */
+            vertical-align: middle;
+            color: #444;
         }
+
+        /* Style dla wykresów */
+        canvas {
+            max-width: 100%;
+            height: auto;
+        }
+
     </style>
 </head>
 <body>
-<div id="map"></div>
+    <div id="map-container">
+        <div id="map"></div>
+    </div>
+    
+    <div id="dashboard-panel">
+        <h2>Dashboard Analityczny</h2>
+
+        <div id="landcover-stats" class="panel-section" style="display:none;">
+            <h3>Pokrycie Terenu (Land Cover)</h3>
+            <div id="landcover-pie-chart-container" style="width:100%; height:300px; margin-bottom: 20px;">
+                 <canvas id="landcoverPieChart"></canvas>
+            </div>
+            <div id="landcover-details">
+                </div>
+        </div>
+
+        <div id="no-stats-selected" class="panel-section">
+            <h3>Brak Aktywnych Statystyk</h3>
+            <p>Wybierz warstwę mapy, aby zobaczyć powiązane statystyki.</p>
+        </div>
+
+        <div id="wind-stats" class="panel-section" style="display:none;">
+            <h3>Prędkość Wiatru</h3>
+            <p>Tutaj pojawią się statystyki prędkości wiatru.</p>
+        </div>
+        
+    </div>
+
 <script>
     var map = L.map('map').setView([54.16, 19.40], 13);
 
@@ -48,53 +146,160 @@
     var landcoverLayer = L.tileLayer('./wyniki/kafelki/landcover/{z}/{x}/{y}.png', {
         tms: true, opacity: 0.8, attribution: 'Pokrycie Terenu'
     });
+    // Możesz dodać inne warstwy tutaj, np.:
+    // var windLayer = L.tileLayer('./wyniki/kafelki/wiatr/{z}/{x}/{y}.png', { ... });
 
     var baseMaps = {"OpenStreetMap": osm};
-    var overlayMaps = { "Pokrycie Terenu": landcoverLayer };
+    var overlayMaps = { "Pokrycie Terenu": landcoverLayer }; // Dodaj tu inne warstwy: "Prędkość Wiatru": windLayer
 
     L.control.layers(baseMaps, overlayMaps).addTo(map);
 
-    // === NOWA, DYNAMICZNA LOGIKA LEGENDY ===
-    
-    // 1. Stwórz obiekt legendy, ale jeszcze go nie dodawaj
-    var legend = L.control({position: 'bottomright'});
-    
-    // 2. Zdefiniuj zawartość HTML legendy
-    legend.onAdd = function (map) {
-        var div = L.DomUtil.create('div', 'info legend');
-        var labels = ['<strong>Pokrycie Terenu</strong>'];
-        var categories = {
-            'Nawierzchnie utwardzone': '#A9A9A9', 'Budynki': '#DC143C',
-            'Drzewa / Lasy': '#228B22', 'Trawa / Tereny zielone': '#7CFC00',
-            'Gleba / Nieużytki': '#D2B48C', 'Woda': '#1E90FF'
-        };
-
-        for (var key in categories) {
-            labels.push('<i style="background:' + categories[key] + '"></i> <span>' + key + '</span>');
-        }
-        div.innerHTML = labels.join('<br>');
-        return div;
+    // --- Dane statystyczne dla Land Cover ---
+    // TO SĄ PRZYKŁADOWE DANE!
+    // Docelowo te dane powinny być generowane przez Twój skrypt Pythona
+    // i zapisane w pliku JSON, który strona będzie wczytywać.
+    // Na potrzeby demonstracji, użyjemy statycznych danych.
+    var landcoverStatsData = {
+        'Nawierzchnie utwardzone': 15.2,
+        'Budynki': 8.5,
+        'Drzewa / Lasy': 35.1,
+        'Trawa / Tereny zielone': 22.3,
+        'Gleba / Nieużytki': 10.7,
+        'Woda': 8.2
     };
 
-    // 3. Stwórz logikę dynamicznego pokazywania/ukrywania
-    map.on('overlayadd', function (eventLayer) {
-        // Pokaż legendę, gdy warstwa "Pokrycie Terenu" jest włączona
-        if (eventLayer.name === 'Pokrycie Terenu') {
-            legend.addTo(this);
-        }
-    });
+    var landcoverColors = {
+        'Nawierzchnie utwardzone': '#A9A9A9',
+        'Budynki': '#DC143C',
+        'Drzewa / Lasy': '#228B22',
+        'Trawa / Tereny zielone': '#7CFC00',
+        'Gleba / Nieużytki': '#D2B48C',
+        'Woda': '#1E90FF'
+    };
+    // ---------------------------------------
 
-    map.on('overlayremove', function (eventLayer) {
-        // Ukryj legendę, gdy warstwa "Pokrycie Terenu" jest wyłączona
-        if (eventLayer.name === 'Pokrycie Terenu') {
-            this.removeControl(legend);
+    // === Logika dynamicznego wyświetlania legendy i statystyk ===
+    var currentActiveLegends = []; // Tablica do śledzenia aktywnych legend
+    var landcoverPieChart = null; // Zmienna na wykres kołowy
+
+    function updateDashboard() {
+        // Ukryj wszystkie sekcje statystyk
+        document.getElementById('landcover-stats').style.display = 'none';
+        document.getElementById('wind-stats').style.display = 'none'; // Jeśli dodasz warstwę wiatru
+        document.getElementById('no-stats-selected').style.display = 'block'; // Pokaż domyślny komunikat
+
+        // Usuń wszystkie aktywne legendy
+        currentActiveLegends.forEach(function(legendControl) {
+            map.removeControl(legendControl);
+        });
+        currentActiveLegends = [];
+
+        // Sprawdź, które warstwy są aktywne i zaktualizuj dashboard/legendę
+        if (map.hasLayer(landcoverLayer)) {
+            document.getElementById('no-stats-selected').style.display = 'none';
+            document.getElementById('landcover-stats').style.display = 'block';
+            renderLandcoverStats();
+            addLandcoverLegend();
         }
-    });
+        // else if (map.hasLayer(windLayer)) { // Jeśli dodasz warstwę wiatru
+        //     document.getElementById('no-stats-selected').style.display = 'none';
+        //     document.getElementById('wind-stats').style.display = 'block';
+        //     // renderWindStats(); // Funkcja do renderowania statystyk wiatru
+        //     // addWindLegend(); // Funkcja do dodawania legendy wiatru
+        // }
+    }
+
+    function renderLandcoverStats() {
+        var detailsDiv = document.getElementById('landcover-details');
+        detailsDiv.innerHTML = ''; // Wyczyść poprzednie statystyki
+
+        var labels = [];
+        var data = [];
+        var backgroundColors = [];
+
+        for (var category in landcoverStatsData) {
+            labels.push(category);
+            data.push(landcoverStatsData[category]);
+            backgroundColors.push(landcoverColors[category]);
+
+            var statItem = document.createElement('div');
+            statItem.className = 'stat-item';
+            statItem.innerHTML = `<span class="stat-label">${category}:</span> <span class="stat-value">${landcoverStatsData[category].toFixed(2)}%</span>`;
+            detailsDiv.appendChild(statItem);
+        }
+
+        // Zniszcz poprzedni wykres, jeśli istnieje
+        if (landcoverPieChart) {
+            landcoverPieChart.destroy();
+        }
+
+        // Renderuj wykres kołowy
+        var ctx = document.getElementById('landcoverPieChart').getContext('2d');
+        landcoverPieChart = new Chart(ctx, {
+            type: 'pie',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: data,
+                    backgroundColor: backgroundColors,
+                    hoverOffset: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'right',
+                        labels: {
+                            color: '#444',
+                            font: {
+                                size: 12
+                            }
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                let label = context.label || '';
+                                if (label) {
+                                    label += ': ';
+                                }
+                                if (context.parsed !== null) {
+                                    label += context.parsed.toFixed(2) + '%';
+                                }
+                                return label;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    function addLandcoverLegend() {
+        var landcoverLegend = L.control({position: 'bottomright'});
+        landcoverLegend.onAdd = function (map) {
+            var div = L.DomUtil.create('div', 'info legend');
+            var labels = ['<strong>Pokrycie Terenu</strong>'];
+            for (var key in landcoverColors) {
+                labels.push('<i style="background:' + landcoverColors[key] + '"></i> <span>' + key + '</span>');
+            }
+            div.innerHTML = labels.join('<br>');
+            return div;
+        };
+        landcoverLegend.addTo(map);
+        currentActiveLegends.push(landcoverLegend);
+    }
+
+    // Uruchom updateDashboard za każdym razem, gdy warstwa jest dodana/usunięta
+    map.on('overlayadd', updateDashboard);
+    map.on('overlayremove', updateDashboard);
+
+    // Initial load: domyślnie pokaż statystyki dla landcover, jeśli jest aktywny
+    landcoverLayer.addTo(map); // Dodaj warstwę Land Cover domyślnie
+    updateDashboard(); // Zaktualizuj dashboard po załadowaniu
     
-    // Domyślnie włącz warstwę i jej legendę
-    landcoverLayer.addTo(map);
-    legend.addTo(map);
-
 </script>
 </body>
 </html>
