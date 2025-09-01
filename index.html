@@ -6,111 +6,39 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; height: 100vh; overflow: hidden; background-color: #f0f2f5; }
-        #map-container { flex: 2; position: relative; box-shadow: 2px 0 8px rgba(0,0,0,0.1); z-index: 1; }
-        #map { height: 100%; width: 100%; }
-        #dashboard-panel { flex: 1; padding: 20px; background-color: #ffffff; overflow-y: auto; display: flex; flex-direction: column; }
-        .panel-section { background-color: #fdfdfd; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-        .panel-section h2 { margin-top: 0; color: #333; font-size: 1.5em; border-bottom: 2px solid #007bff; padding-bottom: 10px; margin-bottom: 20px;}
-        .panel-section h3 { margin-top: 0; color: #333; font-size: 1.2em; border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 15px; }
-        .stat-item { display: flex; align-items: center; padding: 8px 0; border-bottom: 1px dashed #eee; font-size: 0.95em;}
-        .stat-item:last-child { border-bottom: none; }
-        .stat-color-box { width: 18px; height: 18px; margin-right: 10px; border: 1px solid rgba(0,0,0,0.2); border-radius: 3px; flex-shrink: 0;}
-        .stat-label { font-weight: 500; color: #555; flex-grow: 1; }
-        .stat-value { font-weight: bold; color: #007bff; }
-        .leaflet-control-container .leaflet-bottomright .info.legend { background: rgba(255, 255, 255, 0.9); line-height: 22px; border-radius: 5px; box-shadow: 0 0 10px rgba(0,0,0,0.2); }
-        .legend i { width: 18px; height: 18px; float: left; margin-right: 8px; border: 1px solid rgba(0,0,0,0.4); vertical-align: middle; border-radius: 3px; }
-        .legend span { display: inline-block; vertical-align: middle; color: #444; }
+        body { margin: 0; padding: 0; font-family: sans-serif; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
     </style>
 </head>
 <body>
-    <div id="map-container"><div id="map"></div></div>
-    <div id="dashboard-panel">
-        <div class="panel-section"><h2>Dashboard Analityczny</h2></div>
-        <div id="landcover-stats" class="panel-section" style="display:none;">
-            <h3>Pokrycie Terenu (Land Cover)</h3>
-            <div id="landcover-pie-chart-container" style="position: relative; height:250px; width:100%; margin-bottom: 20px;"><canvas id="landcoverPieChart"></canvas></div>
-            <div id="landcover-details"></div>
-        </div>
-        <div id="no-stats-selected" class="panel-section">
-            <h3>Brak Aktywnych Statystyk</h3>
-            <p>Wybierz warstwę z panelu po prawej stronie mapy, aby zobaczyć powiązane statystyki.</p>
-        </div>
-    </div>
-
+<div id="map"></div>
 <script>
-    var map = L.map('map').setView([54.16, 19.40], 13);
-    var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
-    var landcoverLayer = L.tileLayer('./wyniki/kafelki/landcover/{z}/{x}/{y}.png', { tms: true, opacity: 0.8, attribution: 'Pokrycie Terenu' });
-    var overlayMaps = { "Pokrycie Terenu": landcoverLayer };
-    L.control.layers({"OpenStreetMap": osm}, overlayMaps).addTo(map);
+    var map = L.map('map').setView([54.16, 19.40], 13); // Wyśrodkowanie na Elblągu
 
-    var landcoverColors = { 'Nawierzchnie utwardzone': '#A9A9A9', 'Budynki': '#DC143C', 'Drzewa / Lasy': '#228B22', 'Trawa / Tereny zielone': '#7CFC00', 'Gleba / Nieużytki': '#D2B48C', 'Woda': '#1E90FF' };
-    var currentActiveLegends = {};
-    var landcoverPieChart = null;
+    var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    }).addTo(map);
 
-    function updateDashboard() {
-        // Ukryj wszystko i usuń legendy
-        document.getElementById('landcover-stats').style.display = 'none';
-        document.getElementById('no-stats-selected').style.display = 'block';
-        if (currentActiveLegends['landcover']) { map.removeControl(currentActiveLegends['landcover']); }
+    var windLayer = L.tileLayer('./wyniki/kafelki/wiatr/{z}/{x}/{y}.png', {
+        tms: true, opacity: 0.7, attribution: 'Prędkość Wiatru'
+    });
+    var floodLayer = L.tileLayer('./wyniki/kafelki/podtopienia/{z}/{x}/{y}.png', {
+        tms: true, opacity: 0.7, attribution: 'Ryzyko Podtopień'
+    });
+    var comfortLayer = L.tileLayer('./wyniki/kafelki/komfort/{z}/{x}/{y}.png', {
+        tms: true, opacity: 0.7, attribution: 'Komfort Cieplny'
+    });
 
-        // Pokaż odpowiednie elementy dla włączonych warstw
-        if (map.hasLayer(landcoverLayer)) {
-            document.getElementById('no-stats-selected').style.display = 'none';
-            document.getElementById('landcover-stats').style.display = 'block';
-            renderLandcoverStats();
-            addLandcoverLegend();
-        }
-    }
+    var baseMaps = {"OpenStreetMap": osm};
+    var overlayMaps = {
+        "Komfort Cieplny": comfortLayer,
+        "Prędkość Wiatru": windLayer,
+        "Ryzyko Podtopień": floodLayer
+    };
 
-    function renderLandcoverStats() {
-        var detailsDiv = document.getElementById('landcover-details');
-        detailsDiv.innerHTML = '<i>Wczytywanie statystyk...</i>';
-        
-        fetch('./wyniki/landcover_stats.json')
-            .then(response => { if (!response.ok) { throw new Error("File not found"); } return response.json(); })
-            .then(statsData => {
-                detailsDiv.innerHTML = '';
-                var labels = [], data = [], backgroundColors = [];
-                for (var category in statsData) {
-                    labels.push(category); data.push(statsData[category]); backgroundColors.push(landcoverColors[category]);
-                    var statItem = document.createElement('div');
-                    statItem.className = 'stat-item';
-                    statItem.innerHTML = `<div class="stat-color-box" style="background-color:${landcoverColors[category]}"></div><span class="stat-label">${category}:</span><span class="stat-value">${statsData[category].toFixed(2)}%</span>`;
-                    detailsDiv.appendChild(statItem);
-                }
-                if (landcoverPieChart) { landcoverPieChart.destroy(); }
-                var ctx = document.getElementById('landcoverPieChart').getContext('2d');
-                landcoverPieChart = new Chart(ctx, {
-                    type: 'doughnut', data: { labels: labels, datasets: [{ data: data, backgroundColor: backgroundColors, hoverOffset: 4 }] },
-                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
-                });
-            })
-            .catch(error => { detailsDiv.innerHTML = 'Błąd: Nie znaleziono pliku ze statystykami. Uruchom analizę w Colab, aby go wygenerować.'; });
-    }
-
-    function addLandcoverLegend() {
-        if (currentActiveLegends['landcover']) { map.removeControl(currentActiveLegends['landcover']); }
-        var legend = L.control({position: 'bottomright'});
-        legend.onAdd = function (map) {
-            var div = L.DomUtil.create('div', 'info legend');
-            var labels = ['<strong>Pokrycie Terenu</strong>'];
-            for (var key in landcoverColors) {
-                labels.push('<i style="background:' + landcoverColors[key] + '"></i> <span>' + key + '</span>');
-            }
-            div.innerHTML = labels.join('<br>');
-            return div;
-        };
-        legend.addTo(map);
-        currentActiveLegends['landcover'] = legend;
-    }
-
-    map.on('overlayadd overlayremove', updateDashboard);
-    landcoverLayer.addTo(map);
-    updateDashboard();
+    L.control.layers(baseMaps, overlayMaps).addTo(map);
+    comfortLayer.addTo(map);
 </script>
 </body>
 </html>
