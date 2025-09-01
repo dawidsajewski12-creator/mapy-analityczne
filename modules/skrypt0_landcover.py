@@ -1,9 +1,5 @@
 # /modules/skrypt0_landcover.py
-import os
-import zipfile
-import json
-import numpy as np
-import rasterio
+import os, zipfile, json, numpy as np, rasterio
 from rasterio.features import rasterize
 from rasterio.warp import reproject, Resampling
 import geopandas as gpd
@@ -22,10 +18,9 @@ def find_and_extract_bdot_layers(zip_path, target_filenames, extract_folder):
 
 def calculate_and_save_stats(raster_path, stats_path, legend_map):
     print(f"-> Obliczanie statystyk z: {os.path.basename(raster_path)}")
-    with rasterio.open(raster_path) as src:
-        data = src.read(1)
+    with rasterio.open(raster_path) as src: data = src.read(1)
     class_ids, counts = np.unique(data, return_counts=True)
-    total_pixels = np.sum(counts[class_ids != 0])
+    total_pixels = np.sum(counts[class_ids != 0]);
     if total_pixels == 0: total_pixels = 1
     stats_data = {}
     for class_id, count in zip(class_ids, counts):
@@ -39,8 +34,7 @@ def calculate_and_save_stats(raster_path, stats_path, legend_map):
 
 def main(config):
     print("\n--- Uruchamianie Skryptu 0: Tworzenie Pokrycia Terenu ---")
-    paths = config['paths']
-    params = config['params']['landcover']
+    paths = config['paths']; params = config['params']['landcover']
     with rasterio.open(paths['nmt']) as src_nmt:
         base_profile = src_nmt.profile.copy()
         scale_factor = base_profile['transform'].a / params['target_res']
@@ -53,8 +47,7 @@ def main(config):
         for fpath in landcover_paths:
             code = next((key for key in params['classification_map'] if key in os.path.basename(fpath)), None)
             if code:
-                class_id, _ = params['classification_map'][code]
-                gdf = gpd.read_file(fpath)
+                class_id, _ = params['classification_map'][code]; gdf = gpd.read_file(fpath)
                 if gdf.crs != base_profile['crs']: gdf = gdf.to_crs(base_profile['crs'])
                 geometries = [(geom, class_id) for geom in gdf.geometry]
                 class_mask = rasterize(shapes=geometries, out_shape=(ny, nx), transform=transform, fill=0, dtype=np.uint8)
