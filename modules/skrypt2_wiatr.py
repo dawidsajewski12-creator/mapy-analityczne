@@ -1,22 +1,20 @@
 # -*- coding: utf-8 -*-
 import numpy as np
 import rasterio
-from rasterio.enums import Resampling
-# NOWY IMPORT
-from scipy.ndimage import gaussian_filter, shift
+from scipy.ndimage import gaussian_filter
 import os
 
 def align_raster(source_path, profile, resampling_method):
     with rasterio.open(source_path) as src:
-        array = src.read(1, out_shape=(profile['height'], profile['width']), resampling=getattr(Resampling, resampling_method))
+        array = src.read(1, out_shape=(profile['height'], profile['width']), resampling=getattr(resampling_method, resampling_method))
     return array
 
 def main(config):
-    print("\n--- Uruchamianie Skryptu 2: Analiza Wiatru (Wersja Ulepszona) ---")
+    print("\n--- Uruchamianie Skryptu 2: Analiza Wiatru (Nowe Podejście CFD-Like) ---")
     paths = config['paths']
     params = config['params']['wind']
     weather = config['params']['wind']
-    
+
     print("   Etap 1: Przygotowanie danych...")
     with rasterio.open(paths['nmt']) as src:
         profile = src.profile.copy()
@@ -26,50 +24,54 @@ def main(config):
         new_height = int(src.height * scale_factor)
         transform = src.transform * src.transform.scale(1/scale_factor, 1/scale_factor)
         profile.update({'height': new_height, 'width': new_width, 'transform': transform, 'dtype': 'float32'})
-        
+
     nmpt = align_raster(paths['nmpt'], profile, 'bilinear')
     nmt = align_raster(paths['nmt'], profile, 'bilinear')
     
-    base_wind_speed = weather['wind_speed']
-    wind_field = np.full(nmt.shape, base_wind_speed, dtype=np.float32)
-    
-    print("   Etap 2: Obliczenia fizyczne z wygładzaniem...")
     building_height = np.maximum(0, nmpt - nmt)
-    building_mask = (building_height > params['building_threshold']).astype(np.float32)
-    
-    # NOWOŚĆ: Wygładzamy maskę budynków, aby uzyskać płynne przejścia
-    smoothed_buildings = gaussian_filter(building_mask, sigma=3)
-    
-    # Redukcja prędkości wiatru proporcjonalna do "gęstości" zabudowy
-    wind_field *= (1 - smoothed_buildings * 0.9) # Redukcja do 90% wewnątrz budynków
+    buildings = (building_height > params['building_threshold']).astype(np.float32)
 
-    # NOWOŚĆ: Ulepszony cień aerodynamiczny
-    shadow_length_pixels = (building_height * 10 / target_res) # Długość cienia = 10x wysokość
-    wind_dir_rad = np.deg2rad(270 - weather['wind_direction'])
-    
-    # Przesuwamy wygładzoną maskę budynków, aby stworzyć miękki cień
-    dy, dx = shadow_length_pixels * np.sin(wind_dir_rad), shadow_length_pixels * np.cos(wind_dir_rad)
-    
-    # Zamiast skomplikowanego przesuwania, zastosujemy prostsze, ale efektywne globalne rozmycie cienia
-    # To da bardziej naturalny efekt niż twarde krawędzie cienia.
-    shadow_mask = np.zeros_like(wind_field)
-    
-    # Prosta pętla symulująca "przesuwanie" cienia
-    temp_mask = building_mask.copy()
-    for _ in range(int(np.mean(shadow_length_pixels[shadow_length_pixels > 0]))):
-        temp_mask = shift(temp_mask, [np.sin(wind_dir_rad), np.cos(wind_dir_rad)], order=0)
-        shadow_mask += temp_mask
+    print("   Etap 2: Obliczanie pola prędkości i kierunku wiatru...")
+    # Ustawienia początkowe
+    wind_dir_rad = np.deg2rad(weather['wind_direction'] - 180) # Kierunek Z którego wieje
+    base_u = weather['wind_speed'] * np.cos(wind_dir_rad) # Składowa U (zachód-wschód)
+    base_v = weather['wind_speed'] * np.sin(wind_dir_rad) # Składowa V (południe-północ)
 
-    shadow_mask = gaussian_filter(shadow_mask.astype(float), sigma=10)
-    shadow_mask /= np.max(shadow_mask) # Normalizacja
-    
-    wind_field *= (1 - shadow_mask * 0.5) # Redukcja w cieniu o max 50%
-    wind_field = np.maximum(wind_field, 0) # Prędkość nie może być ujemna
+    u_field = np.full(nmt.shape, base_u, dtype=np.float32)
+    v_field = np.full(nmt.shape, base_v, dtype=np.float32)
 
-    print("   Etap 3: Zapisywanie wyniku...")
-    output_path = paths['output_wind_raster']
-    with rasterio.open(output_path, 'w', **profile) as dst:
-        dst.write(wind_field, 1)
+    # Wpływ budynków - iteracyjna propagacja zaburzeń
+    for _ in range(15): # Im więcej iteracji, tym "dalszy" wpływ budynków
+        u_field_old, v_field_old = u_field.copy(), v_field.copy()
+        
+        # Rozprzestrzenianie się pola wiatru (uproszczona adwekcja i dyfuzja)
+        u_field[1:,:] = 0.5 * (u_field_old[:-1,:] + u_field_old[1:,:])
+        v_field[1:,:] = 0.5 * (v_field_old[:-1,:] + v_field_old[1:,:])
+        
+        # Wygładzanie (lepkość)
+        u_field = gaussian_filter(u_field, sigma=1.5)
+        v_field = gaussian_filter(v_field, sigma=1.5)
 
-    print(f"--- Skrypt 2 zakończony pomyślnie! Wynik: {output_path} ---")
-    return output_path
+        # Warunek brzegowy: zerowa prędkość na ścianach budynków
+        u_field[buildings > 0] = 0
+        v_field[buildings > 0] = 0
+
+    wind_speed = np.sqrt(u_field**2 + v_field**2)
+    # Zapisz kierunek w stopniach dla wizualizacji
+    wind_direction_deg = (np.arctan2(v_field, u_field) * 180 / np.pi) % 360
+
+    print("   Etap 3: Zapisywanie wyników...")
+    # Zapisz raster prędkości
+    with rasterio.open(paths['output_wind_raster'], 'w', **profile) as dst:
+        dst.write(wind_speed, 1)
+        
+    # Zapisz raster kierunku
+    dir_profile = profile.copy()
+    dir_profile.update({'dtype': 'float32'})
+    # NOWOŚĆ: Zapisujemy drugi raster z kierunkiem
+    wind_dir_path = os.path.join(os.path.dirname(paths['output_wind_raster']), 'kierunek_wiatru.tif')
+    with rasterio.open(wind_dir_path, 'w', **dir_profile) as dst:
+        dst.write(wind_direction_deg, 1)
+
+    print(f"--- Skrypt 2 zakończony pomyślnie! Wynik: {paths['output_wind_raster']} ---")
+    return paths['output_wind_raster']
