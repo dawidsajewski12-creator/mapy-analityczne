@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
     <TileMap version="1.0.0" tilemapservice="http://tms.osgeo.org/1.0.0">
-      <Title>temp.vrt</Title>
+      <Title>korony_drzew_rgba.tif</Title>
       <Abstract></Abstract>
       <SRS>EPSG:3857</SRS>
       <BoundingBox minx="22.93550772244542" miny="54.10313251210204" maxx="22.97073923237441" maxy="54.12602778678542"/>
