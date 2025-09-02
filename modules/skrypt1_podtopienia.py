@@ -6,41 +6,35 @@ from numba import njit, prange
 import os
 
 def align_raster(source_path, profile, resampling_method):
-    """Dopasowuje raster do zadanego profilu."""
     with rasterio.open(source_path) as src:
         array = src.read(1, out_shape=(profile['height'], profile['width']), resampling=getattr(Resampling, resampling_method))
     return array
 
 @njit
-def green_ampt_infiltration(Ks, psi, theta_diff, t, cumulative_infiltrated):
-    """Model infiltracji Greena-Ampta."""
+def green_ampt_infiltration(Ks, psi, theta_diff, cumulative_infiltrated):
     if cumulative_infiltrated == 0:
         return Ks * (1 + (psi * theta_diff) / 1e-9)
     return Ks * (1 + (psi * theta_diff) / cumulative_infiltrated)
 
 @njit(parallel=True)
-def run_kinematic_wave(manning, water_depth, rainfall_intensity_ms,
-                       total_time_s, dt_s, dx, psi, theta_diff, Ks, slope_x, slope_y):
-    """
-    Zoptymalizowana symulacja spływu powierzchniowego modelem fali kinematycznej.
-    """
+def run_stable_hydraulic_simulation(manning, water_depth, rainfall_intensity_ms,
+                                    total_time_s, dt_s, dx, psi, theta_diff, Ks, slope_x, slope_y):
     max_water_depth = np.copy(water_depth)
     cumulative_infiltrated = np.zeros_like(water_depth, dtype=np.float32)
     
     slope = np.sqrt(slope_x**2 + slope_y**2)
-    
     for i in prange(slope.shape[0]):
         for j in range(slope.shape[1]):
-            if slope[i, j] < 1e-6:
-                slope[i, j] = 1e-6
+            if slope[i, j] < 1e-6: slope[i, j] = 1e-6
     
     conveyance_factor = np.sqrt(slope) / manning
     num_steps = int(total_time_s / dt_s)
-    
+
     for t_step in prange(num_steps):
         if (t_step * dt_s) < (2.0 * 3600):
             water_depth += rainfall_intensity_ms * dt_s
 
+        # Infiltracja (bez zmian)
         for i in range(water_depth.shape[0]):
             for j in range(water_depth.shape[1]):
                  if water_depth[i, j] > 0:
@@ -49,26 +43,22 @@ def run_kinematic_wave(manning, water_depth, rainfall_intensity_ms,
                     water_depth[i, j] -= actual_infiltration
                     cumulative_infiltrated[i, j] += actual_infiltration
         
-        velocity_term = water_depth**(2.0/3.0) * conveyance_factor
-        vx = velocity_term * np.sign(slope_x)
-        vy = velocity_term * np.sign(slope_y)
-        
-        flux_x = vx * water_depth * dt_s
-        flux_y = vy * water_depth * dt_s
-        
+        # Stabilny schemat przepływu (Upwind)
         new_water_depth = np.copy(water_depth)
-        new_water_depth -= (np.abs(flux_x) + np.abs(flux_y)) / dx
-        
-        # === KLUCZOWA ZMIANA: Ręczna implementacja np.roll ===
-        # Przepływ w kierunku X
-        for r in range(new_water_depth.shape[0]):
-            for c in range(1, new_water_depth.shape[1]):
-                new_water_depth[r, c] += np.abs(flux_x[r, c-1]) / dx
-        
-        # Przepływ w kierunku Y
-        for r in range(1, new_water_depth.shape[0]):
-            for c in range(new_water_depth.shape[1]):
-                new_water_depth[r, c] += np.abs(flux_y[r-1, c]) / dx
+        q_x = conveyance_factor * water_depth**(5.0/3.0) * np.sign(slope_x)
+        q_y = conveyance_factor * water_depth**(5.0/3.0) * np.sign(slope_y)
+
+        for r in prange(1, water_depth.shape[0] - 1):
+            for c in prange(1, water_depth.shape[1] - 1):
+                # Wypływ z komórki
+                outflow_x = max(0, q_x[r, c]) + abs(min(0, q_x[r, c+1]))
+                outflow_y = max(0, q_y[r, c]) + abs(min(0, q_y[r+1, c]))
+                
+                # Wpływ do komórki
+                inflow_x = abs(min(0, q_x[r, c])) + max(0, q_x[r, c-1])
+                inflow_y = abs(min(0, q_y[r, c])) + max(0, q_y[r-1, c])
+
+                new_water_depth[r, c] += (inflow_x - outflow_x + inflow_y - outflow_y) * (dt_s / dx)
 
         water_depth = np.maximum(0, new_water_depth)
         max_water_depth = np.maximum(max_water_depth, water_depth)
@@ -76,6 +66,7 @@ def run_kinematic_wave(manning, water_depth, rainfall_intensity_ms,
     return max_water_depth
 
 def main(config):
+    # ... (reszta skryptu bez zmian, tylko wywołanie nowej funkcji symulacyjnej)
     print("\n--- Uruchamianie Skryptu 1: Analiza Podtopień (Wersja Zoptymalizowana) ---")
     paths = config['paths']
     params = config['params']['flood']
@@ -114,7 +105,7 @@ def main(config):
     slope_y, slope_x = np.gradient(nmt, target_res)
 
     print("-> Rozpoczynanie dynamicznej symulacji hydraulicznej...")
-    max_depth = run_kinematic_wave(
+    max_depth = run_stable_hydraulic_simulation(
         manning, water_depth_init, rainfall_intensity_ms,
         params['simulation_duration_h'] * 3600, params['dt_s'],
         target_res, psi, theta_diff, Ks, slope_x, slope_y
