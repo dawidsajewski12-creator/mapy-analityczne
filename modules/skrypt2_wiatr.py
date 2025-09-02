@@ -2,20 +2,20 @@
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
-from scipy.ndimage import convolve, binary_dilation
+# NOWY IMPORT
+from scipy.ndimage import gaussian_filter, shift
 import os
 
 def align_raster(source_path, profile, resampling_method):
-    """Dopasowuje raster do zadanego profilu."""
     with rasterio.open(source_path) as src:
         array = src.read(1, out_shape=(profile['height'], profile['width']), resampling=getattr(Resampling, resampling_method))
     return array
 
 def main(config):
-    print("\n--- Uruchamianie Skryptu 2: Analiza Wiatru (Wersja Zoptymalizowana) ---")
+    print("\n--- Uruchamianie Skryptu 2: Analiza Wiatru (Wersja Ulepszona) ---")
     paths = config['paths']
     params = config['params']['wind']
-    weather = config['params']['wind'] # Zakładamy, że dane pogodowe są już w configu
+    weather = config['params']['wind']
     
     print("   Etap 1: Przygotowanie danych...")
     with rasterio.open(paths['nmt']) as src:
@@ -26,65 +26,45 @@ def main(config):
         new_height = int(src.height * scale_factor)
         transform = src.transform * src.transform.scale(1/scale_factor, 1/scale_factor)
         profile.update({'height': new_height, 'width': new_width, 'transform': transform, 'dtype': 'float32'})
-        nmt = src.read(1, out_shape=(new_height, new_width), resampling=Resampling.bilinear)
         
     nmpt = align_raster(paths['nmpt'], profile, 'bilinear')
-    landcover = align_raster(paths['landcover'], profile, 'nearest')
+    nmt = align_raster(paths['nmt'], profile, 'bilinear')
     
-    # Mapa szorstkości terenu (z0)
-    z0 = np.full(nmt.shape, params['z0_map'][-1], dtype=np.float32)
-    for lc_class, val in params['z0_map'].items():
-        if lc_class != -1:
-            z0[landcover == lc_class] = val
-
-    print("   Etap 2: Obliczenia fizyczne...")
-    # 1. Oblicz bazową prędkość wiatru na podstawie prawa potęgowego
-    # W(z) = W_ref * (z / z_ref)^alpha. Alpha zależy od z0.
-    # Uproszczenie: użyjemy logarytmicznego profilu wiatru
-    # u(z) = u_star / k * ln((z - d) / z0), gdzie u_star to prędkość tarciowa
-    # Dla uproszczenia, zamiast pełnego modelu, zrobimy modyfikację bazowej prędkości.
-    base_wind_speed = weather['wind_speed'] * (params['analysis_height'] / 10.0)**0.2 # Proste prawo potęgowe
-    
+    base_wind_speed = weather['wind_speed']
     wind_field = np.full(nmt.shape, base_wind_speed, dtype=np.float32)
     
-    # 2. Modyfikacja pola wiatru przez szorstkość (redukcja prędkości)
-    # Im większe z0, tym większa redukcja przy powierzchni
-    wind_field *= (1 - np.log1p(z0) / np.log1p(np.max(z0)) * 0.8) # Redukcja do 80%
-
-    # 3. Uproszczony model wpływu budynków
-    building_mask = (nmpt - nmt) > params['building_threshold']
+    print("   Etap 2: Obliczenia fizyczne z wygładzaniem...")
     building_height = np.maximum(0, nmpt - nmt)
+    building_mask = (building_height > params['building_threshold']).astype(np.float32)
     
-    # Symulacja cienia aerodynamicznego
-    # Długość cienia ~ 10-15 * wysokość budynku
-    shadow_length_pixels = (building_height * 12 / target_res).astype(int)
+    # NOWOŚĆ: Wygładzamy maskę budynków, aby uzyskać płynne przejścia
+    smoothed_buildings = gaussian_filter(building_mask, sigma=3)
     
-    # Tworzymy "emiter cienia"
-    shadow_emitter = np.zeros_like(wind_field)
-    
-    # Kierunek wiatru w radianach
-    wind_dir_rad = np.deg2rad(270 - weather['wind_direction']) # Konwersja z meteorologicznej na matematyczną
-    
-    # Przesuwamy maskę budynków w kierunku wiatru, tworząc cień
-    # To jest bardzo duże uproszczenie, ale szybkie
-    from scipy.ndimage import shift
-    for h in np.unique(shadow_length_pixels)[1:]: # pętla po unikalnych długościach cienia
-        if h > 0:
-            mask = shadow_length_pixels == h
-            dx = h * np.cos(wind_dir_rad)
-            dy = h * np.sin(wind_dir_rad)
-            shifted_mask = shift(mask, [dy, dx], order=0, mode='constant', cval=0)
-            shadow_emitter[shifted_mask] = np.maximum(shadow_emitter[shifted_mask], 0.7) # Redukcja o 70% w cieniu
+    # Redukcja prędkości wiatru proporcjonalna do "gęstości" zabudowy
+    wind_field *= (1 - smoothed_buildings * 0.9) # Redukcja do 90% wewnątrz budynków
 
-    wind_field *= (1 - shadow_emitter)
+    # NOWOŚĆ: Ulepszony cień aerodynamiczny
+    shadow_length_pixels = (building_height * 10 / target_res) # Długość cienia = 10x wysokość
+    wind_dir_rad = np.deg2rad(270 - weather['wind_direction'])
     
-    # Symulacja tunelowania
-    # Zidentyfikuj wąskie przejścia między budynkami
-    dilated_buildings = binary_dilation(building_mask, iterations=int(10/target_res)) # 10m
-    gaps = dilated_buildings & ~building_mask
+    # Przesuwamy wygładzoną maskę budynków, aby stworzyć miękki cień
+    dy, dx = shadow_length_pixels * np.sin(wind_dir_rad), shadow_length_pixels * np.cos(wind_dir_rad)
     
-    # W miejscach przewężeń zwiększ prędkość
-    wind_field[gaps] *= 1.4 
+    # Zamiast skomplikowanego przesuwania, zastosujemy prostsze, ale efektywne globalne rozmycie cienia
+    # To da bardziej naturalny efekt niż twarde krawędzie cienia.
+    shadow_mask = np.zeros_like(wind_field)
+    
+    # Prosta pętla symulująca "przesuwanie" cienia
+    temp_mask = building_mask.copy()
+    for _ in range(int(np.mean(shadow_length_pixels[shadow_length_pixels > 0]))):
+        temp_mask = shift(temp_mask, [np.sin(wind_dir_rad), np.cos(wind_dir_rad)], order=0)
+        shadow_mask += temp_mask
+
+    shadow_mask = gaussian_filter(shadow_mask.astype(float), sigma=10)
+    shadow_mask /= np.max(shadow_mask) # Normalizacja
+    
+    wind_field *= (1 - shadow_mask * 0.5) # Redukcja w cieniu o max 50%
+    wind_field = np.maximum(wind_field, 0) # Prędkość nie może być ujemna
 
     print("   Etap 3: Zapisywanie wyniku...")
     output_path = paths['output_wind_raster']
