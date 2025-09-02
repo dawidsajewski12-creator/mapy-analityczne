@@ -1,56 +1,89 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Dashboard Analityczny GIS</title>
+    <title>Mapy Analityczne</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
     <style>
-        body { margin: 0; padding: 0; font-family: sans-serif; }
-        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
-        .legend { padding: 6px 8px; background: rgba(255,255,255,0.85); box-shadow: 0 0 15px rgba(0,0,0,0.2); border-radius: 5px; line-height: 22px; color: #333;}
-        .legend i { width: 18px; height: 18px; float: left; margin-right: 8px; border: 1px solid rgba(0,0,0,0.4); vertical-align: middle; border-radius: 3px;}
-        .legend span { display: inline-block; vertical-align: middle; }
+        html, body, #map {
+            height: 100%;
+            width: 100%;
+            margin: 0;
+        }
     </style>
 </head>
 <body>
+
 <div id="map"></div>
+
 <script>
-    var map = L.map('map').setView([54.16, 19.40], 13);
-    var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
+    // 1. Inicjalizacja mapy
+    var map = L.map('map').setView([54.16, 19.40], 13); // Ustaw współrzędne na centrum Twojego obszaru
 
-    var landcoverLayer = L.tileLayer('./wyniki/kafelki/landcover/{z}/{x}/{y}.png', { tms: true, opacity: 0.8, attribution: 'Pokrycie Terenu'});
-    var canopyLayer = L.tileLayer('./wyniki/kafelki/korony_drzew/{z}/{x}/{y}.png', { tms: true, opacity: 0.8, attribution: 'Korony Drzew'});
-    var windLayer = L.tileLayer('./wyniki/kafelki/wiatr/{z}/{x}/{y}.png', { tms: true, opacity: 0.7, attribution: 'Prędkość Wiatru'});
-    var floodLayer = L.tileLayer('./wyniki/kafelki/podtopienia/{z}/{x}/{y}.png', { tms: true, opacity: 0.7, attribution: 'Ryzyko Podtopień'});
-    var comfortLayer = L.tileLayer('./wyniki/kafelki/komfort/{z}/{x}/{y}.png', { tms: true, opacity: 0.7, attribution: 'Komfort Cieplny'});
+    // 2. Dodanie podkładu mapowego (np. OpenStreetMap)
+    var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
 
-    var baseMaps = {"OpenStreetMap": osm};
-    var overlayMaps = {
-        "Pokrycie Terenu": landcoverLayer,
-        "Korony Drzew (Canopy)": canopyLayer,
-        "Komfort Cieplny": comfortLayer,
-        "Prędkość Wiatru": windLayer,
-        "Ryzyko Podtopień": floodLayer
+    // 3. Definicja warstw z Twoimi danymi (kafelkami)
+    var landcoverLayer = L.tileLayer('./wyniki/kafelki/landcover/{z}/{x}/{y}.png', {
+        maxZoom: 16,
+        tms: true,
+        opacity: 0.7,
+        attribution: 'Pokrycie terenu'
+    });
+
+    var koronyDrzewLayer = L.tileLayer('./wyniki/kafelki/korony_drzew/{z}/{x}/{y}.png', {
+        maxZoom: 16,
+        tms: true,
+        opacity: 0.7,
+        attribution: 'Korony drzew'
+    });
+
+    var podtopieniaLayer = L.tileLayer('./wyniki/kafelki/podtopienia/{z}/{x}/{y}.png', {
+        maxZoom: 16,
+        tms: true,
+        opacity: 0.7,
+        attribution: 'Zasięg podtopień'
+    });
+
+    var wiatrLayer = L.tileLayer('./wyniki/kafelki/wiatr/{z}/{x}/{y}.png', {
+        maxZoom: 16,
+        tms: true,
+        opacity: 0.7,
+        attribution: 'Prędkość wiatru'
+    });
+
+    var komfortLayer = L.tileLayer('./wyniki/kafelki/komfort/{z}/{x}/{y}.png', {
+        maxZoom: 16,
+        tms: true,
+        opacity: 0.7,
+        attribution: 'Komfort termiczny'
+    });
+    
+    // Dodaj jedną z warstw (np. landcover) jako domyślnie widoczną
+    landcoverLayer.addTo(map);
+
+    // 4. Stworzenie obiektu z warstwami bazowymi i nakładkami
+    var baseMaps = {
+        "OpenStreetMap": osm
     };
+
+    var overlayMaps = {
+        "Pokrycie terenu": landcoverLayer,
+        "Korony drzew": koronyDrzewLayer,
+        "Podtopienia": podtopieniaLayer,
+        "Wiatr": wiatrLayer,
+        "Komfort termiczny": komfortLayer
+    };
+
+    // 5. Dodanie kontrolki do przełączania warstw
     L.control.layers(baseMaps, overlayMaps).addTo(map);
 
-    // Dynamiczna legenda
-    var landcoverLegend = L.control({position: 'bottomright'});
-    landcoverLegend.onAdd = function (map) {
-        var div = L.DomUtil.create('div', 'info legend');
-        var labels = ['<strong>Pokrycie Terenu</strong>'];
-        var categories = {'Nawierzchnie utwardzone': '#A9A9A9', 'Budynki': '#DC143C', 'Drzewa / Lasy': '#228B22', 'Trawa / Tereny zielone': '#7CFC00', 'Gleba / Nieużytki': '#D2B48C', 'Woda': '#1E90FF'};
-        for (var key in categories) { labels.push('<i style="background:' + categories[key] + '"></i> <span>' + key + '</span>'); }
-        div.innerHTML = labels.join('<br>');
-        return div;
-    };
-    map.on('overlayadd', function (e) { if (e.name === 'Pokrycie Terenu') landcoverLegend.addTo(map); });
-    map.on('overlayremove', function (e) { if (e.name === 'Pokrycie Terenu') map.removeControl(landcoverLegend); });
-    
-    landcoverLayer.addTo(map);
-    landcoverLegend.addTo(map);
 </script>
+
 </body>
 </html>
