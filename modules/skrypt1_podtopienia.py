@@ -29,14 +29,12 @@ def run_kinematic_wave(manning, water_depth, rainfall_intensity_ms,
     
     slope = np.sqrt(slope_x**2 + slope_y**2)
     
-    # === KLUCZOWA ZMIANA: Zastąpiono maskowanie pętlą ===
     for i in prange(slope.shape[0]):
         for j in range(slope.shape[1]):
             if slope[i, j] < 1e-6:
                 slope[i, j] = 1e-6
     
     conveyance_factor = np.sqrt(slope) / manning
-
     num_steps = int(total_time_s / dt_s)
     
     for t_step in prange(num_steps):
@@ -61,13 +59,16 @@ def run_kinematic_wave(manning, water_depth, rainfall_intensity_ms,
         new_water_depth = np.copy(water_depth)
         new_water_depth -= (np.abs(flux_x) + np.abs(flux_y)) / dx
         
-        flux_x_in = np.roll(flux_x, 1, axis=1)
-        flux_x_in[:, 0] = 0
-        new_water_depth += np.abs(flux_x_in) / dx
-
-        flux_y_in = np.roll(flux_y, 1, axis=0)
-        flux_y_in[0, :] = 0
-        new_water_depth += np.abs(flux_y_in) / dx
+        # === KLUCZOWA ZMIANA: Ręczna implementacja np.roll ===
+        # Przepływ w kierunku X
+        for r in range(new_water_depth.shape[0]):
+            for c in range(1, new_water_depth.shape[1]):
+                new_water_depth[r, c] += np.abs(flux_x[r, c-1]) / dx
+        
+        # Przepływ w kierunku Y
+        for r in range(1, new_water_depth.shape[0]):
+            for c in range(new_water_depth.shape[1]):
+                new_water_depth[r, c] += np.abs(flux_y[r-1, c]) / dx
 
         water_depth = np.maximum(0, new_water_depth)
         max_water_depth = np.maximum(max_water_depth, water_depth)
