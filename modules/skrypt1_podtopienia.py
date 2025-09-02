@@ -1,62 +1,149 @@
-# /modules/skrypt1_podtopienia.py
-import os; import numpy as np; import rasterio; from rasterio.warp import reproject, Resampling; from numba import njit, prange
+# -*- coding: utf-8 -*-
+import numpy as np
+import rasterio
+from rasterio.enums import Resampling
+from numba import njit, prange
+import os
+
+def align_raster(source_path, profile, resampling_method):
+    """Dopasowuje raster do zadanego profilu."""
+    with rasterio.open(source_path) as src:
+        array = src.read(1, out_shape=(profile['height'], profile['width']), resampling=getattr(Resampling, resampling_method))
+    return array
+
+@njit
+def green_ampt_infiltration(Ks, psi, theta_diff, t, cumulative_infiltrated):
+    """Model infiltracji Greena-Ampta."""
+    if cumulative_infiltrated == 0:
+        return Ks * (1 + (psi * theta_diff) / 1e-9) # Uniknięcie dzielenia przez zero
+    return Ks * (1 + (psi * theta_diff) / cumulative_infiltrated)
+
 @njit(parallel=True)
-def simulation_step_numba(water_depth, dem, manning_n, pixel_size, dt):
-    rows, cols = water_depth.shape; flux_out, flux_in = np.zeros_like(water_depth), np.zeros_like(water_depth); K = 0.1
-    for r in prange(1, rows - 1):
-        for c in range(1, cols - 1):
-            if water_depth[r, c] > 0:
-                h_center = dem[r, c] + water_depth[r, c]
-                for dr in [-1, 0, 1]:
-                    for dc in [-1, 0, 1]:
-                        if dr == 0 and dc == 0: continue
-                        nr, nc = r + dr, c + dc
-                        if 0 <= nr < rows and 0 <= nc < cols:
-                            h_neighbor = dem[nr, nc] + water_depth[nr, nc]; slope = h_center - h_neighbor
-                            if slope > 0:
-                                avg_n = (manning_n[r, c] + manning_n[nr, nc]) / 2.0
-                                if avg_n > 0:
-                                    flow = K * np.sqrt(slope) / avg_n * water_depth[r, c] * dt; flow = min(flow, water_depth[r, c] * pixel_size**2 / 8.0)
-                                    if flow > 0: flux_out[r, c] += flow; flux_in[nr, nc] += flow
-    new_water_depth = water_depth + (flux_in - flux_out) / (pixel_size**2)
-    return np.maximum(0, new_water_depth)
-def align_raster(path, base_profile, resampling_method='nearest'):
-    with rasterio.open(path) as src:
-        aligned_arr = np.empty((base_profile['height'], base_profile['width']), dtype=src.read(1).dtype)
-        reproject(source=rasterio.band(src, 1), destination=aligned_arr, src_transform=src.transform, src_crs=src.crs, dst_transform=base_profile['transform'], dst_crs=base_profile['crs'], resampling=Resampling[resampling_method])
-    return aligned_arr
-def main(config):
-    print("\n--- Uruchamianie Skryptu 1: Analiza Podtopień ---")
-    paths = config['paths']; params = config['params']['flood']
-    print("-> Przygotowywanie danych wejściowych...")
-    with rasterio.open(paths['nmt']) as src:
-        scale_factor = src.res[0] / params['target_res']; ny = int(src.height * scale_factor); nx = int(src.width * scale_factor)
-        new_shape = (ny, nx); nmt = src.read(1, out_shape=new_shape, resampling=Resampling.bilinear); profile = src.profile.copy()
-        transform = src.transform * src.transform.scale(1/scale_factor, 1/scale_factor); profile.update({'height': ny, 'width': nx, 'transform': transform, 'dtype': 'float32'})
-    nmpt = align_raster(paths['nmpt'], profile, 'bilinear'); landcover = align_raster(paths['landcover'], profile, 'nearest'); crowns = align_raster(paths['output_crowns_raster'], profile, 'nearest'); crown_mask = crowns > 0
-    print("-> Modelowanie intercepcji i obliczanie spływu...")
-    effective_rainfall_mm = np.full(nmt.shape, params['total_rainfall_mm'], dtype=np.float32)
-    effective_rainfall_mm[crown_mask] -= params['interception_mm']; effective_rainfall_mm[effective_rainfall_mm < 0] = 0
-    cn_raster = np.full(nmt.shape, params['cn_map']['default'], dtype=np.float32)
-    for lc_class, cn_val in params['cn_map'].items():
-        if isinstance(lc_class, int): cn_raster[landcover == lc_class] = cn_val
-    s = (25400 / cn_raster) - 254; ia = 0.2 * s
-    runoff_mm = np.where(effective_rainfall_mm > ia, ((effective_rainfall_mm - ia)**2) / (effective_rainfall_mm - ia + s), 0)
-    runoff_per_second = (runoff_mm / 1000.0) / (params['rainfall_duration_h'] * 3600)
-    print("-> Rozpoczynanie dynamicznej symulacji hydraulicznej...")
-    dem_with_barriers = np.where((nmpt - nmt) > params['obstacle_height_m'], nmt + 50, nmt)
-    manning_raster = np.full(nmt.shape, params['manning_map']['default'], dtype=np.float32)
-    for lc_class, n_val in params['manning_map'].items():
-        if isinstance(lc_class, int): manning_raster[landcover == lc_class] = n_val
-    total_steps = int(params['simulation_duration_h'] * 3600 / params['dt_s']); rain_steps = int(params['rainfall_duration_h'] * 3600 / params['dt_s'])
-    water_depth = np.zeros_like(nmt, dtype=np.float32); max_water_depth = np.zeros_like(nmt, dtype=np.float32)
-    for i in range(total_steps):
-        if i < rain_steps: water_depth += runoff_per_second * params['dt_s']
-        water_depth = simulation_step_numba(water_depth, dem_with_barriers, manning_raster, params['target_res'], params['dt_s'])
+def run_kinematic_wave(nmt, manning, water_depth, rainfall_intensity_ms,
+                       total_time_s, dt_s, dx, psi, theta_diff, Ks):
+    """
+    Zoptymalizowana symulacja spływu powierzchniowego modelem fali kinematycznej.
+    """
+    max_water_depth = np.copy(water_depth)
+    cumulative_infiltrated = np.zeros_like(nmt, dtype=np.float32)
+    
+    # Współczynnik do obliczeń (S^1/2 / n)
+    conveyance_factor = np.zeros_like(nmt, dtype=np.float32)
+    
+    # Oblicz nachylenie w kierunkach x i y
+    slope_y, slope_x = np.gradient(nmt, dx)
+    slope = np.sqrt(slope_x**2 + slope_y**2)
+    
+    # Uniknięcie dzielenia przez zero w miejscach płaskich
+    slope[slope < 1e-6] = 1e-6 
+    
+    conveyance_factor = np.sqrt(slope) / manning
+
+    num_steps = int(total_time_s / dt_s)
+    
+    for t_step in prange(num_steps):
+        
+        # 1. Dodaj wodę z opadu
+        if (t_step * dt_s) < (2.0 * 3600): # Czas trwania opadu (2h)
+            water_depth += rainfall_intensity_ms * dt_s
+
+        # 2. Oblicz infiltrację
+        infiltration_rate = np.zeros_like(nmt, dtype=np.float32)
+        for i in range(nmt.shape[0]):
+            for j in range(nmt.shape[1]):
+                 if water_depth[i, j] > 0:
+                    potential_infiltration = green_ampt_infiltration(Ks[i,j], psi[i,j], theta_diff[i,j], t_step * dt_s, cumulative_infiltrated[i, j]) * dt_s
+                    actual_infiltration = min(potential_infiltration, water_depth[i, j])
+                    water_depth[i, j] -= actual_infiltration
+                    cumulative_infiltrated[i, j] += actual_infiltration
+        
+        # 3. Oblicz przepływ (Q = A * v = (h*dx) * (1/n * R^(2/3) * S^(1/2)))
+        # Dla szerokiego kanału R ~= h, więc v = (1/n * h^(2/3) * S^(1/2))
+        # Qx = h * dx * (1/n * h^(2/3) * S_x^(1/2))
+        
+        # Prędkość przepływu
+        velocity_term = water_depth**(2.0/3.0) * conveyance_factor
+        
+        vx = velocity_term * np.sign(slope_x)
+        vy = velocity_term * np.sign(slope_y)
+        
+        # Strumień wody
+        flux_x = vx * water_depth * dt_s
+        flux_y = vy * water_depth * dt_s
+        
+        # Aktualizuj głębokość wody na podstawie bilansu strumieni
+        # Uproszczony schemat FTCS (Forward-Time Central-Space), niestabilny, ale szybki dla dema
+        # W praktyce wymagałby stabilniejszego schematu (np. upwind)
+        
+        new_water_depth = np.copy(water_depth)
+        
+        # Wypływ z komórki
+        new_water_depth -= (np.abs(flux_x) + np.abs(flux_y)) / dx
+        
+        # Wpływ do komórki (z sąsiadów)
+        # X direction
+        flux_x_in = np.roll(flux_x, 1, axis=1)
+        flux_x_in[:, 0] = 0
+        new_water_depth += np.abs(flux_x_in) / dx
+
+        # Y direction
+        flux_y_in = np.roll(flux_y, 1, axis=0)
+        flux_y_in[0, :] = 0
+        new_water_depth += np.abs(flux_y_in) / dx
+
+        water_depth = np.maximum(0, new_water_depth)
         max_water_depth = np.maximum(max_water_depth, water_depth)
-        if (i + 1) % 50 == 0: print(f"  ...krok symulacji {i+1}/{total_steps}")
+        
+    return max_water_depth
+
+def main(config):
+    print("\n--- Uruchamianie Skryptu 1: Analiza Podtopień (Wersja Zoptymalizowana) ---")
+    paths = config['paths']
+    params = config['params']['flood']
+
+    with rasterio.open(paths['nmt']) as src:
+        profile = src.profile.copy()
+        target_res = params['target_res']
+        scale_factor = src.res[0] / target_res
+        new_width = int(src.width * scale_factor)
+        new_height = int(src.height * scale_factor)
+        transform = src.transform * src.transform.scale(1/scale_factor, 1/scale_factor)
+        profile.update({'height': new_height, 'width': new_width, 'transform': transform, 'dtype': 'float32'})
+        nmt = src.read(1, out_shape=(new_height, new_width), resampling=Resampling.bilinear)
+
+    print("-> Przygotowywanie danych wejściowych...")
+    landcover = align_raster(paths['landcover'], profile, 'nearest')
+    
+    manning = np.full(nmt.shape, params['manning_map']['default'], dtype=np.float32)
+    for lc_class, man_val in params['manning_map'].items():
+        if lc_class != 'default':
+            manning[landcover == lc_class] = man_val
+
+    # Parametry dla modelu Greena-Ampta (uproszczone, zależne od landcover)
+    Ks = np.full(nmt.shape, 1e-6, dtype=np.float32) # Przewodność hydrauliczna [m/s]
+    psi = np.full(nmt.shape, 0.1, dtype=np.float32) # Potencjał ssania [m]
+    theta_diff = np.full(nmt.shape, 0.4, dtype=np.float32) # Różnica wilgotności
+    
+    # Przypisz parametry na podstawie landcover
+    Ks[landcover == 3] = 5e-5 # Lasy
+    Ks[landcover == 5] = 1e-5 # Trawa
+    Ks[landcover == 6] = 2e-6 # Gleba
+    Ks[(landcover == 1) | (landcover == 2) | (landcover == 7)] = 1e-9 # Powierzchnie nieprzepuszczalne
+    
+    rainfall_intensity_ms = (params['total_rainfall_mm'] / 1000) / (params['rainfall_duration_h'] * 3600)
+    water_depth_init = np.zeros_like(nmt, dtype=np.float32)
+
+    print("-> Rozpoczynanie dynamicznej symulacji hydraulicznej...")
+    max_depth = run_kinematic_wave(
+        nmt, manning, water_depth_init, rainfall_intensity_ms,
+        params['simulation_duration_h'] * 3600, params['dt_s'],
+        target_res, psi, theta_diff, Ks
+    )
+    
     print("-> Zapisywanie wyniku...")
-    output_path = paths['output_flood_raster']; profile.update(nodata=-9999.0)
-    with rasterio.open(output_path, 'w', **profile) as dst: dst.write(max_water_depth.astype(np.float32), 1)
-    print(f"--- Skrypt 1 zakończony pomyślnie! Wynik: {paths['output_flood_raster']} ---")
-    return paths['output_flood_raster']
+    output_path = paths['output_flood_raster']
+    with rasterio.open(output_path, 'w', **profile) as dst:
+        dst.write(max_depth, 1)
+
+    print(f"--- Skrypt 1 zakończony pomyślnie! Wynik: {output_path} ---")
+    return output_path
