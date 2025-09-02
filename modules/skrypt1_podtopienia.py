@@ -20,7 +20,7 @@ def green_ampt_infiltration(Ks, psi, theta_diff, t, cumulative_infiltrated):
 
 @njit(parallel=True)
 def run_kinematic_wave(manning, water_depth, rainfall_intensity_ms,
-                       total_time_s, dt_s, dx, psi, theta_diff, Ks, slope_x, slope_y): # Dodano slope_x i slope_y
+                       total_time_s, dt_s, dx, psi, theta_diff, Ks, slope_x, slope_y):
     """
     Zoptymalizowana symulacja spływu powierzchniowego modelem fali kinematycznej.
     """
@@ -28,7 +28,12 @@ def run_kinematic_wave(manning, water_depth, rainfall_intensity_ms,
     cumulative_infiltrated = np.zeros_like(water_depth, dtype=np.float32)
     
     slope = np.sqrt(slope_x**2 + slope_y**2)
-    slope[slope < 1e-6] = 1e-6 
+    
+    # === KLUCZOWA ZMIANA: Zastąpiono maskowanie pętlą ===
+    for i in prange(slope.shape[0]):
+        for j in range(slope.shape[1]):
+            if slope[i, j] < 1e-6:
+                slope[i, j] = 1e-6
     
     conveyance_factor = np.sqrt(slope) / manning
 
@@ -104,7 +109,6 @@ def main(config):
     rainfall_intensity_ms = (params['total_rainfall_mm'] / 1000) / (params['rainfall_duration_h'] * 3600)
     water_depth_init = np.zeros_like(nmt, dtype=np.float32)
 
-    # === KLUCZOWA ZMIANA: Oblicz nachylenie TUTAJ ===
     print("-> Obliczanie nachylenia terenu...")
     slope_y, slope_x = np.gradient(nmt, target_res)
 
@@ -112,7 +116,7 @@ def main(config):
     max_depth = run_kinematic_wave(
         manning, water_depth_init, rainfall_intensity_ms,
         params['simulation_duration_h'] * 3600, params['dt_s'],
-        target_res, psi, theta_diff, Ks, slope_x, slope_y # Przekaż nachylenie jako argument
+        target_res, psi, theta_diff, Ks, slope_x, slope_y
     )
     
     print("-> Zapisywanie wyniku...")
