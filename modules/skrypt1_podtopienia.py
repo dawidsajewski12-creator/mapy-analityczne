@@ -34,7 +34,6 @@ def run_stable_hydraulic_simulation(manning, water_depth, rainfall_intensity_ms,
         if (t_step * dt_s) < (2.0 * 3600):
             water_depth += rainfall_intensity_ms * dt_s
 
-        # Infiltracja (bez zmian)
         for i in range(water_depth.shape[0]):
             for j in range(water_depth.shape[1]):
                  if water_depth[i, j] > 0:
@@ -43,21 +42,16 @@ def run_stable_hydraulic_simulation(manning, water_depth, rainfall_intensity_ms,
                     water_depth[i, j] -= actual_infiltration
                     cumulative_infiltrated[i, j] += actual_infiltration
         
-        # Stabilny schemat przepływu (Upwind)
         new_water_depth = np.copy(water_depth)
         q_x = conveyance_factor * water_depth**(5.0/3.0) * np.sign(slope_x)
         q_y = conveyance_factor * water_depth**(5.0/3.0) * np.sign(slope_y)
 
         for r in prange(1, water_depth.shape[0] - 1):
             for c in prange(1, water_depth.shape[1] - 1):
-                # Wypływ z komórki
                 outflow_x = max(0, q_x[r, c]) + abs(min(0, q_x[r, c+1]))
                 outflow_y = max(0, q_y[r, c]) + abs(min(0, q_y[r+1, c]))
-                
-                # Wpływ do komórki
                 inflow_x = abs(min(0, q_x[r, c])) + max(0, q_x[r, c-1])
                 inflow_y = abs(min(0, q_y[r, c])) + max(0, q_y[r-1, c])
-
                 new_water_depth[r, c] += (inflow_x - outflow_x + inflow_y - outflow_y) * (dt_s / dx)
 
         water_depth = np.maximum(0, new_water_depth)
@@ -66,7 +60,6 @@ def run_stable_hydraulic_simulation(manning, water_depth, rainfall_intensity_ms,
     return max_water_depth
 
 def main(config):
-    # ... (reszta skryptu bez zmian, tylko wywołanie nowej funkcji symulacyjnej)
     print("\n--- Uruchamianie Skryptu 1: Analiza Podtopień (Wersja Zoptymalizowana) ---")
     paths = config['paths']
     params = config['params']['flood']
@@ -83,19 +76,14 @@ def main(config):
 
     print("-> Przygotowywanie danych wejściowych...")
     landcover = align_raster(paths['landcover'], profile, 'nearest')
-    
     manning = np.full(nmt.shape, params['manning_map']['default'], dtype=np.float32)
     for lc_class, man_val in params['manning_map'].items():
-        if lc_class != 'default':
-            manning[landcover == lc_class] = man_val
+        if lc_class != 'default': manning[landcover == lc_class] = man_val
 
     Ks = np.full(nmt.shape, 1e-6, dtype=np.float32)
     psi = np.full(nmt.shape, 0.1, dtype=np.float32)
     theta_diff = np.full(nmt.shape, 0.4, dtype=np.float32)
-    
-    Ks[landcover == 3] = 5e-5
-    Ks[landcover == 5] = 1e-5
-    Ks[landcover == 6] = 2e-6
+    Ks[landcover == 3] = 5e-5; Ks[landcover == 5] = 1e-5; Ks[landcover == 6] = 2e-6
     Ks[(landcover == 1) | (landcover == 2) | (landcover == 7)] = 1e-9
     
     rainfall_intensity_ms = (params['total_rainfall_mm'] / 1000) / (params['rainfall_duration_h'] * 3600)
@@ -105,10 +93,19 @@ def main(config):
     slope_y, slope_x = np.gradient(nmt, target_res)
 
     print("-> Rozpoczynanie dynamicznej symulacji hydraulicznej...")
+    # --- POPRAWKA: Konwersja wszystkich tablic na float32 ---
     max_depth = run_stable_hydraulic_simulation(
-        manning, water_depth_init, rainfall_intensity_ms,
-        params['simulation_duration_h'] * 3600, params['dt_s'],
-        target_res, psi, theta_diff, Ks, slope_x, slope_y
+        manning.astype(np.float32), 
+        water_depth_init.astype(np.float32), 
+        rainfall_intensity_ms,
+        params['simulation_duration_h'] * 3600, 
+        params['dt_s'],
+        target_res, 
+        psi.astype(np.float32), 
+        theta_diff.astype(np.float32), 
+        Ks.astype(np.float32), 
+        slope_x.astype(np.float32), 
+        slope_y.astype(np.float32)
     )
     
     print("-> Zapisywanie wyniku...")
