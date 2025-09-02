@@ -6,22 +6,24 @@ import os
 import geopandas as gpd
 from numba import njit, prange
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from rasterio.transform import Affine
 
-# Ta funkcja pozostaje bez zmian - jest już bardzo szybka
 @njit(parallel=True)
-def create_chm_from_points(points_x, points_y, points_z, transform, width, height, nodata_value):
-    """Szybkie tworzenie rastra CHM z punktów przy użyciu Numba."""
+def create_chm_from_points(points_x, points_y, points_z, 
+                           inv_a, inv_b, inv_c, inv_d, inv_e, inv_f, 
+                           width, height, nodata_value):
+    """Szybkie tworzenie rastra CHM z punktów przy użyciu Numba (z manualną transformacją)."""
     chm = np.full((height, width), nodata_value, dtype=np.float32)
-    inv_transform = ~transform
     for i in prange(len(points_x)):
-        px, py = inv_transform * (points_x[i], points_y[i])
-        col, row = int(px), int(py)
-        if 0 <= row < height and 0 <= col < width:
-            # Ta operacja nie jest w pełni bezpieczna w trybie równoległym,
-            # ale przy gęstej chmurze i małej rozdzielczości piksela ryzyko nadpisania jest akceptowalne
-            # dla uzyskania maksymalnej prędkości.
-            if points_z[i] > chm[row, col]:
-                chm[row, col] = points_z[i]
+        # Manualna inwersja transformacji afinicznej
+        col = inv_a * points_x[i] + inv_b * points_y[i] + inv_c
+        row = inv_d * points_x[i] + inv_e * points_y[i] + inv_f
+        
+        col_idx, row_idx = int(col), int(row)
+
+        if 0 <= row_idx < height and 0 <= col_idx < width:
+            if points_z[i] > chm[row_idx, col_idx]:
+                chm[row_idx, col_idx] = points_z[i]
     return chm
 
 def process_laz_file(filepath, min_h, max_h, nmt_arr, nmt_transform):
@@ -30,17 +32,14 @@ def process_laz_file(filepath, min_h, max_h, nmt_arr, nmt_transform):
         with laspy.open(filepath) as laz_file:
             points = laz_file.read().points
             
-            # Jeśli plik ma klasyfikację, użyj jej do wstępnego, szybkiego odfiltrowania 99% niepotrzebnych punktów
             if hasattr(points, 'classification'):
-                mask = (points.classification == 5) # Klasa 5: Wysoka roślinność
-                if np.sum(mask) == 0: return None # Zwróć None, jeśli nie ma punktów tej klasy
+                mask = (points.classification == 5)
+                if np.sum(mask) == 0: return None
                 points = points[mask]
 
-            # Oblicz wysokość względną dla pozostałych punktów
             coords = np.vstack((points.x, points.y)).transpose()
             rows, cols = rasterio.transform.rowcol(nmt_transform, coords[:, 0], coords[:, 1])
             
-            # Usuń punkty, które wypadły poza NMT
             valid_idx = (np.array(rows) >= 0) & (np.array(rows) < nmt_arr.shape[0]) & \
                         (np.array(cols) >= 0) & (np.array(cols) < nmt_arr.shape[1])
             
@@ -52,12 +51,10 @@ def process_laz_file(filepath, min_h, max_h, nmt_arr, nmt_transform):
             ground_elev = nmt_arr[rows, cols]
             relative_height = points.z - ground_elev
             
-            # Ostateczne filtrowanie po wysokości
             final_mask = (relative_height >= min_h) & (relative_height < max_h)
             
             if np.sum(final_mask) == 0: return None
 
-            # Zwróć tylko potrzebne dane: X, Y i wysokość względną
             return np.vstack((points.x[final_mask], points.y[final_mask], relative_height[final_mask])).T
             
     except Exception as e:
@@ -70,7 +67,6 @@ def main(config):
     params = config['params']['lidar']
     laz_folder = paths['laz_folder']
     
-    # 1. Przygotuj siatkę wynikową i wczytaj NMT do pamięci
     with rasterio.open(paths['nmt']) as src:
         profile = src.profile.copy()
         scale_factor = src.res[0] / params['target_res']
@@ -83,7 +79,6 @@ def main(config):
         nmt_arr = src.read(1)
         nmt_transform = src.transform
 
-    # 2. Równoległe przetwarzanie plików LAZ
     laz_files = [os.path.join(laz_folder, f) for f in os.listdir(laz_folder) if f.endswith(('.laz', '.las'))]
     all_veg_points = []
     
@@ -96,27 +91,29 @@ def main(config):
                 all_veg_points.append(result)
 
     if not all_veg_points:
-        print("BŁĄD KRYTYCZNY: Nie znaleziono żadnych punktów roślinności w plikach LAZ po przetworzeniu.")
-        # Zapisz pusty raster, aby uniknąć błędów w dalszej części pipeline'u
+        print("BŁĄD KRYTYCZNY: Nie znaleziono żadnych punktów roślinności w plikach LAZ.")
         with rasterio.open(paths['output_crowns_raster'], 'w', **profile) as dst:
             dst.write(np.full((profile['height'], profile['width']), profile['nodata'], dtype=np.float32), 1)
         return paths['output_crowns_raster'], gpd.GeoDataFrame()
 
-    # 3. Połącz wyniki i stwórz finalny raster CHM
     print("  -> Łączenie wyników i tworzenie rastra wysokości koron...")
     combined_points = np.vstack(all_veg_points)
+    
+    # === KLUCZOWA ZMIANA: Oblicz odwróconą transformację TUTAJ ===
+    inv_transform = ~profile['transform']
+    inv_coeffs = inv_transform.to_gdal() # (c, a, b, f, d, e)
     
     chm_raster = create_chm_from_points(
         combined_points[:, 0], # X
         combined_points[:, 1], # Y
-        combined_points[:, 2], # Już jest to wysokość względna
-        profile['transform'],
+        combined_points[:, 2], # Wysokość względna
+        inv_coeffs[1], inv_coeffs[2], inv_coeffs[0], # a, b, c
+        inv_coeffs[4], inv_coeffs[5], inv_coeffs[3], # d, e, f
         profile['width'],
         profile['height'],
         profile['nodata']
     )
     
-    # 4. Zapisz wynik
     output_path = paths['output_crowns_raster']
     with rasterio.open(output_path, 'w', **profile) as dst:
         dst.write(chm_raster, 1)
