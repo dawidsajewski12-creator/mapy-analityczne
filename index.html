@@ -1,24 +1,21 @@
 <!DOCTYPE html>
-<html>
+<html lang="pl">
 <head>
     <title>Mapy Analityczne</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
     <style>
-        html, body, #map {
-            height: 100%;
-            width: 100%;
-            margin: 0;
-        }
-        .info.legend {
-            padding: 6px 8px;
-            font: 14px/16px Arial, Helvetica, sans-serif;
-            background: white;
-            background: rgba(255,255,255,0.8);
-            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+        html, body, #map { height: 100%; width: 100%; margin: 0; }
+        .leaflet-control-layers-toggle { background-image: url(https://unpkg.com/leaflet@1.9.3/dist/images/layers.png); }
+        .legend {
+            line-height: 18px;
+            color: #555;
+            background-color: #fff;
+            padding: 10px;
             border-radius: 5px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
         }
         .legend i {
             width: 18px;
@@ -27,107 +24,103 @@
             margin-right: 8px;
             opacity: 0.9;
         }
-        .legend-title {
-            text-align: center;
+        .legend .title {
             font-weight: bold;
             margin-bottom: 5px;
+            text-align: center;
+        }
+        .legend .gradient {
+            width: 100%;
+            height: 18px;
+            margin-top: 4px;
+        }
+        .legend .labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
         }
     </style>
 </head>
 <body>
-
 <div id="map"></div>
-
 <script>
-    // 1. Inicjalizacja mapy
-    var map = L.map('map').setView([54.16, 19.40], 13);
-
-    // 2. Podkład mapowy
-    var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
+    const map = L.map('map').setView([54.16, 19.40], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap contributors'
     }).addTo(map);
 
-    // 3. Definicja Twoich warstw analitycznych
-    var tileLayers = {
-        "Pokrycie terenu": L.tileLayer('./wyniki/kafelki/landcover/{z}/{x}/{y}.png', { maxZoom: 16, tms: true, attribution: 'Pokrycie terenu' }),
-        "Korony drzew": L.tileLayer('./wyniki/kafelki/korony_drzew/{z}/{x}/{y}.png', { maxZoom: 16, tms: true, attribution: 'Korony drzew' }),
-        "Zasięg podtopień": L.tileLayer('./wyniki/kafelki/podtopienia/{z}/{x}/{y}.png', { maxZoom: 16, tms: true, attribution: 'Zasięg podtopień' }),
-        "Prędkość wiatru": L.tileLayer('./wyniki/kafelki/wiatr/{z}/{x}/{y}.png', { maxZoom: 16, tms: true, attribution: 'Prędkość wiatru' }),
-        "Komfort termiczny": L.tileLayer('./wyniki/kafelki/komfort/{z}/{x}/{y}.png', { maxZoom: 16, tms: true, attribution: 'Komfort termiczny' })
+    const baseLayers = {};
+    const overlayLayers = {
+        "Pokrycie terenu": L.tileLayer('./wyniki/kafelki/landcover/{z}/{x}/{y}.png', { tms: true }),
+        "Korony drzew": L.tileLayer('./wyniki/kafelki/korony_drzew/{z}/{x}/{y}.png', { tms: true }),
+        "Zasięg podtopień": L.tileLayer('./wyniki/kafelki/podtopienia/{z}/{x}/{y}.png', { tms: true }),
+        "Prędkość wiatru": L.tileLayer('./wyniki/kafelki/wiatr/{z}/{x}/{y}.png', { tms: true }),
+        "Komfort termiczny": L.tileLayer('./wyniki/kafelki/komfort/{z}/{x}/{y}.png', { tms: true })
     };
 
-    // 4. Definicja legend
-    var legends = {
-        "Pokrycie terenu": L.control({position: 'bottomright'}),
-        "Zasięg podtopień": L.control({position: 'bottomright'})
-        // Dodaj kolejne legendy dla innych warstw w razie potrzeby
+    const layersControl = L.control.layers(baseLayers, overlayLayers, { collapsed: false }).addTo(map);
+    let currentLegend = null;
+
+    // --- Definicje Legend ---
+    const legends = {
+        "Pokrycie terenu": () => {
+            const div = L.DomUtil.create("div", "legend");
+            const items = {
+                'Nawierzchnie utwardzone': 'rgb(169, 169, 169)', 'Budynki': 'rgb(220, 20, 60)',
+                'Drzewa / Lasy': 'rgb(34, 139, 34)', 'Trawa / Tereny zielone': 'rgb(124, 252, 0)',
+                'Gleba / Nieużytki': 'rgb(210, 180, 140)', 'Woda': 'rgb(30, 144, 255)'
+            };
+            let labels = '<div class="title">Pokrycie terenu</div>';
+            for (const key in items) {
+                labels += `<div><i style="background:${items[key]}"></i>${key}</div>`;
+            }
+            div.innerHTML = labels;
+            return div;
+        },
+        "Korony drzew": () => createGradientLegend("Wysokość drzew [m]", 4, 40, "linear-gradient(to right, #ffffcc, #006837)"),
+        "Zasięg podtopień": () => createGradientLegend("Głębokość wody [m]", 0.01, 2.0, "linear-gradient(to right, #deebf7, #3182bd)"),
+        "Prędkość wiatru": () => createGradientLegend("Prędkość wiatru [m/s]", 0, 10, "linear-gradient(to right, #fde725, #440154)"),
+        "Komfort termiczny": () => createGradientLegend("Odczuwalna temp. UTCI [°C]", 18, 38, "linear-gradient(to right, #4575b4, #ffffbf, #d73027)")
     };
-    
-    // Legenda dla Pokrycia Terenu
-    legends["Pokrycie terenu"].onAdd = function (map) {
-        var div = L.DomUtil.create('div', 'info legend');
-        var labels = ['<div class="legend-title">Pokrycie terenu</div>'];
-        var categories = {
-            'Nawierzchnie utwardzone': 'rgb(169, 169, 169)',
-            'Budynki': 'rgb(220, 20, 60)',
-            'Drzewa / Lasy': 'rgb(34, 139, 34)',
-            'Trawa / Tereny zielone': 'rgb(124, 252, 0)',
-            'Gleba / Nieużytki': 'rgb(210, 180, 140)',
-            'Woda': 'rgb(30, 144, 255)'
-        };
-        for (var key in categories) {
-            labels.push(
-                '<i style="background:' + categories[key] + '"></i> ' + key
-            );
-        }
-        div.innerHTML = labels.join('<br>');
+
+    function createGradientLegend(title, min, max, gradientCss) {
+        const div = L.DomUtil.create("div", "legend");
+        div.innerHTML = `
+            <div class="title">${title}</div>
+            <div class="gradient" style="background: ${gradientCss};"></div>
+            <div class="labels">
+                <span>${min}</span>
+                <span>${(min + max) / 2}</span>
+                <span>${max}</span>
+            </div>
+        `;
+        return div;
+    }
+
+    const legendControl = L.control({ position: "bottomright" });
+    legendControl.onAdd = function(map) {
+        const div = L.DomUtil.create("div", "legend-placeholder");
         return div;
     };
-    
-    // Legenda dla Podtopień (prosty przykład gradientu)
-    legends["Zasięg podtopień"].onAdd = function(map) {
-        var div = L.DomUtil.create('div', 'info legend'),
-            grades = [0, 0.5, 1, 1.5, 2], // metry
-            labels = ['<div class="legend-title">Głębokość wody (m)</div>'];
-        
-        for (var i = 0; i < grades.length; i++) {
-            var color = `rgba(30, 144, 255, ${ (i + 1) / grades.length })`;
-            labels.push(
-                '<i style="background:' + color + '"></i> ' +
-                grades[i] + (grades[i + 1] ? '&ndash;' + grades[i + 1] : '+'));
-        }
-        div.innerHTML = labels.join('<br>');
-        return div;
-    };
+    legendControl.addTo(map);
 
+    function updateLegend(layerName) {
+        const placeholder = document.querySelector('.legend-placeholder');
+        placeholder.innerHTML = "";
+        if (layerName && legends[layerName]) {
+            const legendContent = legends[layerName]();
+            placeholder.appendChild(legendContent);
+        }
+    }
 
-    // 5. Logika przełączania warstw i legend
-    var layersControl = L.control.layers(null, tileLayers, { collapsed: false }).addTo(map);
-    var currentLegend = null;
-
-    map.on('overlayadd', function (eventLayer) {
-        if (currentLegend) {
-            map.removeControl(currentLegend);
-        }
-        if (legends[eventLayer.name]) {
-            currentLegend = legends[eventLayer.name];
-            currentLegend.addTo(map);
-        }
-    });
+    map.on('overlayadd', (e) => updateLegend(e.name));
+    map.on('overlayremove', () => updateLegend(null));
     
-    map.on('overlayremove', function (eventLayer) {
-        if (currentLegend && legends[eventLayer.name] === currentLegend) {
-            map.removeControl(currentLegend);
-            currentLegend = null;
-        }
-    });
-    
-    // Domyślnie włącz pierwszą warstwę
-    var firstLayerName = Object.keys(tileLayers)[0];
-    tileLayers[firstLayerName].addTo(map);
+    // Pokaż pierwszą warstwę domyślnie
+    const firstLayerName = Object.keys(overlayLayers)[0];
+    map.addLayer(overlayLayers[firstLayerName]);
+    updateLegend(firstLayerName);
 
 </script>
-
 </body>
 </html>
