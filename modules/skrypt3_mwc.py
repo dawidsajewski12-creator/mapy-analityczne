@@ -1,5 +1,6 @@
 # /modules/skrypt3_mwc.py (Zawiera logikę skryptów 3,4,5)
 import os; import numpy as np; import rasterio; from rasterio.warp import transform as warp_transform; from matplotlib.colors import LightSource; from datetime import datetime; import pytz; from pysolar.solar import get_altitude, get_azimuth; from numba import njit, prange
+from matplotlib import colormaps
 def align_raster(path, base_profile, resampling_method='nearest'):
     with rasterio.open(path) as src:
         aligned_arr = np.empty((base_profile['height'], base_profile['width']), dtype=np.float32)
@@ -30,7 +31,9 @@ def main(config, weather_data):
     sun_alt = get_altitude(center_lat[0], center_lon[0], date_utc); sun_azi = get_azimuth(center_lat[0], center_lon[0], date_utc)
     if sun_alt > 0:
         direct_radiation = params['solar_constant'] * params['atmospheric_transmissivity']**(1/np.sin(np.deg2rad(sun_alt))); ls = LightSource(azdeg=sun_azi, altdeg=sun_alt)
-        hillshade = ls.shade(nmpt, cmap='gray', vert_exag=1.5, blend_mode='soft'); shadow_factor = hillshade[:,:,0] / 255.0; insolation = direct_radiation * shadow_factor
+        # POPRAWKA: Użycie obiektu mapy kolorów zamiast nazwy
+
+        hillshade = ls.shade(nmpt, cmap=colormaps.get_cmap('gray'), vert_exag=1.5, blend_mode='soft'); shadow_factor = hillshade[:,:,0] / 255.0; insolation = direct_radiation * shadow_factor
     else: insolation = np.zeros_like(nmt)
 
     print("-> Etap 3: Symulacja LST (Skrypt 3)...")
