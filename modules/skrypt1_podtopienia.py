@@ -58,5 +58,5 @@ def main(config):
     print("-> Zapisywanie wyniku...")
     output_path = paths['output_flood_raster']; profile.update(nodata=-9999.0)
     with rasterio.open(output_path, 'w', **profile) as dst: dst.write(max_water_depth.astype(np.float32), 1)
-    print(f"--- Skrypt 1 zakończony pomyślnie! Wynik: {output_path} ---")
-    return output_path
+    print(f"--- Skrypt 1 zakończony pomyślnie! Wynik: {paths['output_flood_raster']} ---")
+    return paths['output_flood_raster']
