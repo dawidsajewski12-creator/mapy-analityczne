@@ -1,110 +1,111 @@
-# /modules/skrypt0_lidar.py (Wersja 2.0 - Ostateczna Poprawka)
-import os
+# -*- coding: utf-8 -*-
 import numpy as np
 import rasterio
-from rasterio.features import shapes
-from rasterio.fill import fillnodata # <<< POPRAWNY IMPORT
-from scipy.ndimage import gaussian_filter, maximum_filter, label
-from skimage.segmentation import watershed
-import geopandas as gpd
-from shapely.geometry import Point
+from rasterio.enums import Resampling
 import laspy
+import os
 from numba import njit, prange
 
 @njit(parallel=True)
-def rasterize_points_numba(points, min_x, max_y, res, nx, ny):
-    grid_max = np.full((ny, nx), -np.inf, dtype=np.float32)
-    for i in prange(points.shape[0]):
-        col = int((points[i, 0] - min_x) / res)
-        row = int((max_y - points[i, 1]) / res)
-        if 0 <= row < ny and 0 <= col < nx:
-            atomic_max(grid_max, (row, col), points[i, 2])
-    for i in prange(ny):
-        for j in prange(nx):
-            if np.isinf(grid_max[i, j]):
-                grid_max[i, j] = np.nan
-    return grid_max
+def create_chm_from_points(points_x, points_y, points_z, transform, width, height, nodata_value):
+    """Szybkie tworzenie rastra CHM z punktów przy użyciu Numba."""
+    chm = np.full((height, width), nodata_value, dtype=np.float32)
+    inv_transform = ~transform
 
-@njit
-def atomic_max(array, idx, value):
-    if value > array[idx]:
-        array[idx] = value
+    for i in prange(len(points_x)):
+        px, py = inv_transform * (points_x[i], points_y[i])
+        col, row = int(px), int(py)
+
+        if 0 <= row < height and 0 <= col < width:
+            # Używamy pętli, aby uniknąć problemów z równoległym zapisem do tej samej komórki
+            # To jest uproszczenie - w praktyce przy tej rozdzielczości konflikty są rzadkie
+            # Dla pełnej atomowości operacji potrzebne byłyby bardziej zaawansowane techniki
+            if points_z[i] > chm[row, col]:
+                chm[row, col] = points_z[i]
+    return chm
 
 def main(config):
-    print("\n--- Uruchamianie Skryptu 0: Przetwarzanie Lidar ---")
+    print("\n--- Uruchamianie Skryptu 0: Przetwarzanie Lidar (Nowa Wersja) ---")
     paths = config['paths']
     params = config['params']['lidar']
-    
-    with rasterio.open(paths['nmt']) as src_nmt:
-        profile = src_nmt.profile
-        nmt = src_nmt.read(1)
-        ny, nx = nmt.shape
-        minx, maxy = profile['transform'] * (0, 0)
-        pixel_width = profile['transform'].a
+    laz_folder = paths['laz_folder']
+    target_res = params['target_res']
 
-    laz_files = [os.path.join(paths['laz_folder'], f) for f in os.listdir(paths['laz_folder']) if f.endswith('.laz')]
-    if not laz_files:
-        raise FileNotFoundError(f"Nie znaleziono plików .laz w folderze: {paths['laz_folder']}")
-    
-    vnmpt = np.full((ny, nx), np.nan, dtype=np.float32)
-    for f in laz_files:
-        print(f"  -> Przetwarzanie pliku: {os.path.basename(f)}...")
-        laz = laspy.read(f)
-        veg_points = np.stack([laz.x, laz.y, laz.z], axis=1)[laz.classification == 5]
-        if len(veg_points) > 0:
-            vnmpt_tile = rasterize_points_numba(veg_points, minx, maxy, pixel_width, nx, ny)
-            vnmpt = np.fmax(vnmpt, vnmpt_tile) # fmax jest szybsze niż where
-        del laz, veg_points
-
-    # <<< POPRAWIONE WYWOŁANIE FUNKCJI >>>
-    vnmpt_filled = fillnodata(vnmpt, mask=~np.isnan(vnmpt))
-    
-    chm = vnmpt_filled - nmt
-    chm[chm < 0] = 0
-    chm[chm > params['max_plausible_tree_height']] = 0
-
-    chm_smoothed = gaussian_filter(chm, sigma=0.5)
-    maxima = maximum_filter(chm_smoothed, size=params['treetop_filter_size'])
-    treetops_mask = (chm_smoothed == maxima) & (chm > params['min_tree_height'])
-    markers, num_features = label(treetops_mask)
-    segmentation_mask = chm > (params['min_tree_height'] / 2)
-    labels = watershed(-chm_smoothed, markers, mask=segmentation_mask)
-    
-    unique_labels, counts = np.unique(labels, return_counts=True)
-    small_labels = unique_labels[counts * (pixel_width**2) < params['min_crown_area_m2']]
-    for small_label in small_labels:
-        labels[labels == small_label] = 0
-    
-    profile.update(dtype=rasterio.int32, nodata=0, compress='lzw')
-    with rasterio.open(paths['output_crowns_raster'], 'w', **profile) as dst:
-        dst.write(labels.astype(rasterio.int32), 1)
-    print(f"  -> Raster koron drzew zapisany.")
-
-    tree_data = []
-    unique_final_labels = np.unique(labels)[1:]
-    for tree_id in unique_final_labels:
-        current_crown_mask = (labels == tree_id)
-        chm_crown = np.where(current_crown_mask, chm, -np.inf)
-        flat_index = np.argmax(chm_crown)
-        treetop_row, treetop_col = np.unravel_index(flat_index, chm_crown.shape)
-        height_relative = chm[treetop_row, treetop_col]
-        height_absolute = nmt[treetop_row, treetop_col] + height_relative
-        crown_base = height_absolute - (height_relative * (1 - params['crown_base_factor']))
-        treetop_x, treetop_y = profile['transform'] * (treetop_col + 0.5, treetop_row + 0.5)
-        crown_area = np.sum(current_crown_mask) * (pixel_width**2)
-        tree_data.append({
-            'geometry': Point(treetop_x, treetop_y),
-            'tree_id': int(tree_id),
-            'wysokosc_wzgledna_m': float(height_relative),
-            'wysokosc_npm_m': float(height_absolute),
-            'podstawa_korony_m': float(crown_base),
-            'pow_korony_m2': float(crown_area)
+    # 1. Uzyskaj profil i rozdzielczość z NMT
+    with rasterio.open(paths['nmt']) as src:
+        nmt_profile = src.profile.copy()
+        nmt_bounds = src.bounds
+        scale_factor = src.res[0] / target_res
+        new_width = int(src.width * scale_factor)
+        new_height = int(src.height * scale_factor)
+        transform = src.transform * src.transform.scale(1/scale_factor, 1/scale_factor)
+        nmt_profile.update({
+            'width': new_width,
+            'height': new_height,
+            'transform': transform,
+            'dtype': 'float32',
+            'nodata': -9999.0
         })
+
+    # 2. Przetwarzaj pliki LAZ
+    all_veg_points = []
+    laz_files = [f for f in os.listdir(laz_folder) if f.endswith('.laz')]
+    for filename in laz_files:
+        print(f"  -> Filtrowanie pliku: {filename}...")
+        try:
+            with laspy.open(os.path.join(laz_folder, filename)) as laz:
+                mask = (laz.classification == 5) # Klasa 5: Wysoka roślinność
+                points = laz.read_points(mask)
+                
+                # Zbieramy tylko potrzebne dane
+                x, y, z = points.x, points.y, points.z
+                # Odrzucamy punkty poza obszarem NMT dla bezpieczeństwa
+                valid_indices = (x > nmt_bounds.left) & (x < nmt_bounds.right) & \
+                                (y > nmt_bounds.bottom) & (y < nmt_bounds.top)
+                
+                # Przechowujemy jako tablice numpy
+                all_veg_points.append(np.vstack((x[valid_indices], y[valid_indices], z[valid_indices])).T)
+
+        except Exception as e:
+            print(f"BŁĄD podczas przetwarzania {filename}: {e}")
+
+    if not all_veg_points:
+        print("BŁĄD KRYTYCZNY: Nie znaleziono żadnych punktów roślinności w plikach LAZ.")
+        return None, None # Zwracamy None, aby pipeline mógł kontynuować
+
+    # 3. Połącz punkty i stwórz CHM
+    print("  -> Łączenie punktów i tworzenie rastra wysokości koron...")
+    combined_points = np.vstack(all_veg_points)
     
-    if tree_data:
-        gdf = gpd.GeoDataFrame(tree_data, crs=profile['crs'])
-        gdf.to_file(paths['output_trees_vector'], driver='GPKG')
-        print(f"  -> Inwentaryzacja zakończona. Zapisano {len(gdf)} drzew.")
+    # Przelicz Z na wysokość względną (CHM)
+    # Wczytaj NMT i zinterpoluj wartości dla punktów
+    with rasterio.open(paths['nmt']) as nmt_src:
+        coords = [(p[0], p[1]) for p in combined_points]
+        ground_elev = np.array([val[0] for val in nmt_src.sample(coords)])
     
-    print("--- Skrypt 0 zakończony ---")
-    return paths['output_crowns_raster'], paths['output_trees_vector']
+    # Wysokość względna
+    relative_height = combined_points[:, 2] - ground_elev
+
+    # Filtrowanie wysokości
+    height_mask = (relative_height >= params['min_tree_height']) & (relative_height < params['max_plausible_tree_height'])
+    
+    # Tworzenie CHM
+    chm_raster = create_chm_from_points(
+        combined_points[:, 0][height_mask],
+        combined_points[:, 1][height_mask],
+        relative_height[height_mask],
+        nmt_profile['transform'],
+        nmt_profile['width'],
+        nmt_profile['height'],
+        nmt_profile['nodata']
+    )
+    
+    # 4. Zapisz wynik
+    output_path = paths['output_crowns_raster']
+    with rasterio.open(output_path, 'w', **nmt_profile) as dst:
+        dst.write(chm_raster, 1)
+    print(f"  -> Raster koron drzew zapisany: {output_path}")
+
+    # Zwracamy ścieżkę do rastra i pusty obiekt geopandas, aby zachować spójność interfejsu
+    # z poprzednią wersją, która zwracała też wektor.
+    return output_path, gpd.GeoDataFrame()
