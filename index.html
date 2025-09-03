@@ -39,22 +39,82 @@
     L.control.layers(null, overlayLayers, { collapsed: false }).addTo(map);
 
     const legendControl = L.control({ position: "bottomright" });
-    legendControl.onAdd = () => L.DomUtil.create("div", "legend-placeholder info-box");
+    legendControl.onAdd = () => L.DomUtil.create("div", "legend-placeholder", "info-box");
     legendControl.addTo(map);
 
-    function createGradientLegend(title, min, max, gradientCss) { /* ... */ }
+    function createGradientLegend(title, min, max, gradientCss) {
+        const div = L.DomUtil.create("div", "legend");
+        div.innerHTML = `
+            <div class="title">${title}</div>
+            <div class="gradient" style="background: ${gradientCss};"></div>
+            <div class="labels">
+                <span>${min}</span>
+                <span>${((min + max) / 2).toFixed(1)}</span>
+                <span>${max}</span>
+            </div>
+        `;
+        return div;
+    }
 
     const legends = {
-        "Pokrycie terenu": () => { /* ... */ },
+        "Pokrycie terenu": () => {
+            const div = L.DomUtil.create("div", "legend");
+            const items = {
+                'Nawierzchnie utwardzone': 'rgb(169, 169, 169)', 'Budynki': 'rgb(220, 20, 60)',
+                'Drzewa / Lasy': 'rgb(34, 139, 34)', 'Trawa / Tereny zielone': 'rgb(124, 252, 0)',
+                'Gleba / Nieużytki': 'rgb(210, 180, 140)', 'Woda': 'rgb(30, 144, 255)'
+            };
+            let labels = '<div class="title">Pokrycie terenu</div>';
+            for (const key in items) {
+                labels += `<div><i style="background:${items[key]}"></i>${key}</div>`;
+            }
+            div.innerHTML = labels;
+            return div;
+        },
         "Korony drzew": () => createGradientLegend("Wysokość drzew [m]", 4, 40, "linear-gradient(to right, #ffffcc, #006837)"),
-        "Model Terenu (NMT)": () => createGradientLegend("Wysokość n.p.m.", 0, 100, "linear-gradient(to right, #398439, #e8e397, #bf8754)"),
+        "Model Terenu (NMT)": () => createGradientLegend("Wysokość n.p.m.", 5, 95, "linear-gradient(to right, #398439, #e8e397, #bf8754)"),
         "Zasięg podtopień": () => createGradientLegend("Głębokość wody [m]", 0.01, 1.5, "linear-gradient(to right, #deebf7, #3182bd)"),
-        "Prędkość wiatru": (weather) => { /* ... */ },
-        "Komfort termiczny": (weather) => { /* ... */ }
+        "Prędkość wiatru": (weather) => {
+            const div = createGradientLegend("Prędkość wiatru [m/s]", 0, (weather.wind_speed * 1.5).toFixed(1), "linear-gradient(to right, #fde725, #440154)");
+            div.innerHTML += `<div style="font-size:12px; text-align:center; margin-top:5px;">Wiatr bazowy: ${weather.wind_speed.toFixed(1)} m/s, ${weather.wind_direction.toFixed(0)}°</div>`;
+            return div;
+        },
+        "Komfort termiczny": (weather) => {
+            const div = createGradientLegend("Odczuwalna temp. UTCI [°C]", 9, 38, "linear-gradient(to right, #4575b4, #ffffbf, #d73027)");
+            div.innerHTML += `<div style="font-size:12px; text-align:center; margin-top:5px;">Temp. powietrza: ${weather.temperature.toFixed(1)}°C</div>`;
+            return div;
+        }
     };
     
     let currentWeatherData = { temperature: 25, wind_speed: 5, wind_direction: 270 };
-    // ... (reszta skryptu bez zmian)
+    fetch(`https://api.open-meteo.com/v1/forecast?latitude=54.16&longitude=19.40&current=temperature_2m,wind_speed_10m,wind_direction_10m&timezone=Europe/Warsaw`)
+        .then(response => response.json())
+        .then(data => {
+            currentWeatherData = {
+                temperature: data.current.temperature_2m,
+                wind_speed: data.current.wind_speed_10m / 3.6,
+                wind_direction: data.current.wind_direction_10m
+            };
+        });
+
+    map.on('overlayadd', (e) => {
+        updateLegend(e.name, currentWeatherData);
+        if (e.name === "Prędkość wiatru") {
+            if (velocityLayer) map.removeLayer(velocityLayer);
+            // Tutaj w przyszłości można dodać logikę animacji wiatru
+        }
+    });
+
+    map.on('overlayremove', (e) => {
+        updateLegend(null);
+        if (e.name === "Prędkość wiatru" && velocityLayer) {
+            map.removeLayer(velocityLayer);
+        }
+    });
+    
+    // Ustawienie widoku początkowego
+    overlayLayers["Pokrycie terenu"].addTo(map);
+    updateLegend("Pokrycie terenu");
 </script>
 </body>
 </html>
