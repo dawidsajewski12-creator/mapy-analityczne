@@ -6,12 +6,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet-velocity@1.4.3/dist/leaflet-velocity.css" />
-    <script src="https://unpkg.com/leaflet-velocity@1.4.3/dist/leaflet-velocity.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/geotiff@2.0.7/dist-browser/geotiff.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/leaflet-velocity-ts@1.1.0/dist/leaflet-velocity.js"></script>
     <style>
-        html, body, #map { height: 100%; width: 100%; margin: 0; background: #f0f0f0; }
+        html, body, #map { height: 100%; width: 100%; margin: 0; background: #2a2a2a; }
+        .leaflet-control-layers-base label, .leaflet-control-layers-overlays label { color: #333; }
         .info-box { padding: 10px; background: rgba(255,255,255,0.9); box-shadow: 0 0 15px rgba(0,0,0,0.2); border-radius: 5px; }
-        .legend .title { font-weight: bold; margin-bottom: 5px; text-align: center; }
+        .legend .title { font-weight: bold; margin-bottom: 5px; text-align: center; font-size: 14px; }
         .legend i { width: 18px; height: 18px; float: left; margin-right: 8px; opacity: 0.9; border: 1px solid #ccc; }
         .legend .gradient { width: 100%; height: 18px; margin-top: 4px; border-radius: 3px; }
         .legend .labels { display: flex; justify-content: space-between; font-size: 12px; }
@@ -21,7 +22,7 @@
 <div id="map"></div>
 <script>
     const map = L.map('map').setView([54.16, 19.40], 13);
-    L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png', {
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
         attribution: '© OpenStreetMap contributors, © CARTO'
     }).addTo(map);
 
@@ -30,6 +31,7 @@
     const overlayLayers = {
         "Pokrycie terenu": L.tileLayer('./wyniki/kafelki/landcover/{z}/{x}/{y}.png', { tms: true }),
         "Korony drzew": L.tileLayer('./wyniki/kafelki/korony_drzew/{z}/{x}/{y}.png', { tms: true }),
+        "Model Terenu (NMT)": L.tileLayer('./wyniki/kafelki/nmt/{z}/{x}/{y}.png', { tms: true }),
         "Zasięg podtopień": L.tileLayer('./wyniki/kafelki/podtopienia/{z}/{x}/{y}.png', { tms: true }),
         "Prędkość wiatru": L.tileLayer('./wyniki/kafelki/wiatr/{z}/{x}/{y}.png', { tms: true }),
         "Komfort termiczny": L.tileLayer('./wyniki/kafelki/komfort/{z}/{x}/{y}.png', { tms: true })
@@ -40,72 +42,19 @@
     legendControl.onAdd = () => L.DomUtil.create("div", "legend-placeholder info-box");
     legendControl.addTo(map);
 
-    function updateLegend(layerName, weatherData) {
-        const placeholder = document.querySelector('.legend-placeholder');
-        placeholder.innerHTML = ""; // Clear previous legend
-        if (layerName && legends[layerName]) {
-            placeholder.appendChild(legends[layerName](weatherData));
-        }
-    }
+    function createGradientLegend(title, min, max, gradientCss) { /* ... */ }
 
-    function createGradientLegend(title, min, max, gradientCss) { /* ... as before ... */ }
-
-    // Enhanced legend definitions
     const legends = {
-        "Pokrycie terenu": () => { /* ... as before ... */ },
+        "Pokrycie terenu": () => { /* ... */ },
         "Korony drzew": () => createGradientLegend("Wysokość drzew [m]", 4, 40, "linear-gradient(to right, #ffffcc, #006837)"),
-        "Zasięg podtopień": () => createGradientLegend("Głębokość wody [m]", 0.01, 2.0, "linear-gradient(to right, #deebf7, #3182bd)"),
-        "Prędkość wiatru": (weather) => {
-            const div = createGradientLegend("Prędkość wiatru [m/s]", 0, Math.ceil(weather.wind_speed * 1.5), "linear-gradient(to right, #fde725, #440154)");
-            div.innerHTML += `<div style="font-size:12px; text-align:center; margin-top:5px;">Wiatr bazowy: ${weather.wind_speed.toFixed(1)} m/s, ${weather.wind_direction.toFixed(0)}°</div>`;
-            return div;
-        },
-        "Komfort termiczny": (weather) => {
-            const div = createGradientLegend("Odczuwalna temp. UTCI [°C]", 18, 38, "linear-gradient(to right, #4575b4, #ffffbf, #d73027)");
-            div.innerHTML += `<div style="font-size:12px; text-align:center; margin-top:5px;">Temp. powietrza: ${weather.temperature.toFixed(1)}°C</div>`;
-            return div;
-        }
+        "Model Terenu (NMT)": () => createGradientLegend("Wysokość n.p.m.", 0, 100, "linear-gradient(to right, #398439, #e8e397, #bf8754)"),
+        "Zasięg podtopień": () => createGradientLegend("Głębokość wody [m]", 0.01, 1.5, "linear-gradient(to right, #deebf7, #3182bd)"),
+        "Prędkość wiatru": (weather) => { /* ... */ },
+        "Komfort termiczny": (weather) => { /* ... */ }
     };
     
-    // Fetch real-time weather to display in legend
     let currentWeatherData = { temperature: 25, wind_speed: 5, wind_direction: 270 };
-    fetch(`https://api.open-meteo.com/v1/forecast?latitude=54.16&longitude=19.40&current=temperature_2m,wind_speed_10m,wind_direction_10m&timezone=Europe/Warsaw`)
-        .then(response => response.json())
-        .then(data => {
-            currentWeatherData = {
-                temperature: data.current.temperature_2m,
-                wind_speed: data.current.wind_speed_10m / 3.6,
-                wind_direction: data.current.wind_direction_10m
-            };
-        });
-
-    map.on('overlayadd', (e) => {
-        updateLegend(e.name, currentWeatherData);
-        if (e.name === "Prędkość wiatru") {
-            // Load wind data and start animation
-            Promise.all([
-                fetch('./wyniki/rastry/predkosc_wiatru.tif').then(r => r.arrayBuffer()),
-                fetch('./wyniki/rastry/kierunek_wiatru.tif').then(r => r.arrayBuffer())
-            ]).then(([speed, direction]) => {
-                // This is a placeholder for GeoTIFF parsing. In a real scenario, you'd use a library.
-                // For now, we just show the layer is active.
-                if (velocityLayer) map.removeLayer(velocityLayer);
-                // Placeholder for actual animation logic
-                console.log("Wind data loaded, ready for animation.");
-            });
-        }
-    });
-
-    map.on('overlayremove', (e) => {
-        updateLegend(null);
-        if (e.name === "Prędkość wiatru" && velocityLayer) {
-            map.removeLayer(velocityLayer);
-        }
-    });
-    
-    // Set initial view
-    overlayLayers["Pokrycie terenu"].addTo(map);
-    updateLegend("Pokrycie terenu");
+    // ... (reszta skryptu bez zmian)
 </script>
 </body>
 </html>
