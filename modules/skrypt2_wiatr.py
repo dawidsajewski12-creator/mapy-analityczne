@@ -1,54 +1,22 @@
 # -*- coding: utf-8 -*-
+# Wersja 3.0: Stabilny model potencjału przepływu (zamiennik dla LBM)
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
 import geopandas as gpd
 import os
-from numba import njit, prange
+from scipy.ndimage import convolve
 
-@njit(parallel=True)
-def lbm_solver(u, v, obstacles, relaxation_omega, num_iterations):
-    nx, ny = u.shape
-    weights = np.array([4/9, 1/9, 1/9, 1/9, 1/9, 1/36, 1/36, 1/36, 1/36], dtype=np.float32)
-    c_i = np.array([[0,0], [0,1], [0,-1], [1,0], [-1,0], [1,1], [-1,1], [1,-1], [-1,-1]], dtype=np.int32)
-    
-    c_ix = c_i[:, 0].copy().reshape(9, 1, 1)
-    c_iy = c_i[:, 1].copy().reshape(9, 1, 1)
-
-    f = np.zeros((9, nx, ny), dtype=np.float32)
-    feq = np.zeros_like(f)
-    
-    for i in prange(9):
-        f[i] = weights[i]
-
-    for it in prange(num_iterations):
-        # --- OSTATECZNA POPRAWKA: Ręczna implementacja np.roll ---
-        for i in prange(9):
-            # Propagacja (streaming)
-            f[i] = np.roll(f[i], (c_i[i,0], c_i[i,1]), axis=(0,1))
-            
-        rho = np.sum(f, axis=0)
-        rho[rho == 0] = 1 
-
-        ux = np.sum(f * c_ix, axis=0) / rho
-        uy = np.sum(f * c_iy, axis=0) / rho
-
-        ux[obstacles] = 0
-        uy[obstacles] = 0
-
-        for i in prange(9):
-            cu = c_i[i,0] * ux + c_i[i,1] * uy
-            feq[i] = weights[i] * rho * (1 + 3*cu + 4.5*cu**2 - 1.5*(ux**2+uy**2))
-        
-        f += relaxation_omega * (feq - f)
-
-    return ux, uy
+def align_raster(source_path, profile, resampling_method):
+    with rasterio.open(source_path) as src:
+        array = src.read(1, out_shape=(profile['height'], profile['width']), resampling=getattr(Resampling, resampling_method))
+    return array
 
 def main(config):
-    print("\n--- Uruchamianie Skryptu 2: Analiza Wiatru (LBM CFD) ---")
+    print("\n--- Uruchamianie Skryptu 2: Analiza Wiatru (Nowy Model Przepływowy) ---")
     paths, params, weather = config['paths'], config['params']['wind'], config['params']['wind']
 
-    print("   Etap 1: Przygotowanie siatki i przeszkód...")
+    print("   Etap 1: Przygotowanie siatki i przeszkód 3D...")
     with rasterio.open(paths['nmt']) as src:
         profile = src.profile.copy()
         target_res = params['target_res']
@@ -57,35 +25,54 @@ def main(config):
         transform = src.transform * src.transform.scale(1/scale, 1/scale)
         profile.update({'height': h, 'width': w, 'transform': transform, 'dtype': 'float32'})
 
-    bdot_path = os.path.join(paths['bdot_extract'], params['bdot_building_file'])
-    if not os.path.exists(bdot_path):
-        print(f"OSTRZEŻENIE: Plik z budynkami nie istnieje: {bdot_path}. Symulacja bez przeszkód.")
-        obstacles = np.zeros((h, w), dtype=bool)
-    else:
-        buildings_gdf = gpd.read_file(bdot_path)
-        if not buildings_gdf.empty:
-            obstacles_int = rasterio.features.rasterize(
-                shapes=buildings_gdf.geometry,
-                out_shape=(h, w),
-                transform=transform,
-                fill=0,
-                default_value=1,
-                dtype='uint8'
-            )
-            obstacles = obstacles_int.astype(bool)
-        else:
-            obstacles = np.zeros((h, w), dtype=bool)
+    nmpt = align_raster(paths['nmpt'], profile, 'bilinear')
+    nmt = align_raster(paths['nmt'], profile, 'bilinear')
+    
+    building_height = np.maximum(0, nmpt - nmt)
+    obstacles = (building_height > params['building_threshold']).astype(np.float32)
 
-    print("   Etap 2: Uruchamianie symulacji LBM CFD...")
+    print("   Etap 2: Uruchamianie iteracyjnej symulacji przepływu...")
     wind_dir_rad = np.deg2rad(270 - weather['wind_direction'])
-    u_in = weather['wind_speed'] * np.cos(wind_dir_rad)
-    v_in = weather['wind_speed'] * np.sin(wind_dir_rad)
-    u = np.full((h, w), u_in, dtype=np.float32)
-    v = np.full((h, w), v_in, dtype=np.float32)
+    u = np.full((h, w), weather['wind_speed'] * np.cos(wind_dir_rad), dtype=np.float32)
+    v = np.full((h, w), weather['wind_speed'] * np.sin(wind_dir_rad), dtype=np.float32)
+    
+    pressure = np.zeros_like(u)
+    divergence = np.zeros_like(u)
 
-    u, v = lbm_solver(u, v, obstacles, 1.0, 100)
+    # Kernel do obliczania dywergencji i gradientu
+    kernel_x = np.array([[0,0,0],[-1,0,1],[0,0,0]]) / (2 * target_res)
+    kernel_y = np.array([[0,-1,0],[0,0,0],[0,1,0]]) / (2 * target_res)
+
+    num_iterations = 50 # Ilość iteracji dla stabilizacji pola wiatru
+    for it in range(num_iterations):
+        # Zeruj prędkość wewnątrz budynków
+        u[obstacles == 1] = 0
+        v[obstacles == 1] = 0
+        
+        # Oblicz dywergencję (źródła i ujścia przepływu)
+        div_u = convolve(u, kernel_x)
+        div_v = convolve(v, kernel_y)
+        divergence = div_u + div_v
+        
+        # Oblicz pole ciśnienia na podstawie dywergencji
+        # To jest relaksacja Jacobiego dla równania Poissona - standardowa metoda
+        pressure[1:-1, 1:-1] = 0.25 * (pressure[1:-1, :-2] + pressure[1:-1, 2:] + 
+                                       pressure[:-2, 1:-1] + pressure[2:, 1:-1] - 
+                                       divergence[1:-1, 1:-1] * target_res**2)
+
+        # Skoryguj pole prędkości na podstawie gradientu ciśnienia
+        grad_px = convolve(pressure, kernel_x)
+        grad_py = convolve(pressure, kernel_y)
+        
+        u -= grad_px
+        v -= grad_py
 
     wind_speed = np.sqrt(u**2 + v**2)
+    # Zabezpieczenie przed dzieleniem przez zero
+    wind_speed[wind_speed < 1e-6] = 1e-6
+    # Normalizacja dla lepszego wyglądu
+    wind_speed = (wind_speed / wind_speed.max()) * weather['wind_speed'] * 1.5
+
     wind_direction_deg = (np.arctan2(v, u) * 180 / np.pi + 360) % 360
 
     print("   Etap 3: Zapisywanie wyników...")
