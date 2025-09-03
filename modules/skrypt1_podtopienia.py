@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# modules/skrypt1_podtopienia.py - Wersja 4.2: Naprawiony błąd podwójnego dekoratora i stabilności
+# modules/skrypt1_podtopienia.py - Wersja 4.3: Ujednolicenie typów danych (float32)
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
@@ -16,7 +16,6 @@ def green_ampt_infiltration(Ks, psi, theta_diff, cumulative_infiltrated):
     if cumulative_infiltrated <= 0: return Ks
     return Ks * (1 + (psi * theta_diff) / cumulative_infiltrated)
 
-# Upewnij się, że jest tu tylko JEDEN dekorator @njit
 @njit(parallel=True)
 def hydraulic_simulation_fixed(manning, water_depth, rainfall_intensity_ms,
                               total_time_s, dt_s, dx, psi, theta_diff, Ks, nmt):
@@ -53,24 +52,17 @@ def hydraulic_simulation_fixed(manning, water_depth, rainfall_intensity_ms,
                                 avg_depth = (water_depth[r, c] + water_depth[nr, nc]) / 2.0
                                 if avg_depth > 0.001:
                                     avg_manning = (manning[r, c] + manning[nr, nc]) / 2.0
-                                    # Dodano zabezpieczenie przed ujemną wartością pod pierwiastkiem
-                                    slope = max(0, dh / dx)
+                                    slope = max(np.float32(0.0), dh / dx)
                                     velocity = (avg_depth**(2.0 / 3.0) * np.sqrt(slope)) / avg_manning
-                                    
                                     flow_volume = velocity * avg_depth * dt_s
-                                    
-                                    # Bardziej restrykcyjne ograniczenie przepływu dla stabilności
-                                    max_transferable_volume = water_depth[r, c] * dx * 0.1
-                                    
+                                    max_transferable_volume = water_depth[r, c] * dx * np.float32(0.1)
                                     flow_volume = min(flow_volume, max_transferable_volume)
-                                    
                                     if flow_volume > 0:
-                                       # Przepływ jest stosowany do kopii, aby uniknąć błędów w tej samej iteracji
                                        new_water_depth[r, c] -= flow_volume / dx
                                        new_water_depth[nr, nc] += flow_volume / dx
 
-
-        water_depth = np.maximum(0.0, new_water_depth)
+        # **GŁÓWNA ZMIANA: Jawne rzutowanie na float32**
+        water_depth = np.maximum(np.float32(0.0), new_water_depth)
         max_water_depth = np.maximum(max_water_depth, water_depth)
         
         if np.isnan(water_depth).any() or np.isinf(water_depth).any():
@@ -80,8 +72,7 @@ def hydraulic_simulation_fixed(manning, water_depth, rainfall_intensity_ms,
     return max_water_depth
 
 def main(config):
-    # Reszta funkcji main bez zmian...
-    print("\n--- Uruchamianie Skryptu 1: Analiza Podtopień (Wersja 4.2) ---")
+    print("\n--- Uruchamianie Skryptu 1: Analiza Podtopień (Wersja 4.3) ---")
     paths, params = config['paths'], config['params']['flood']
 
     with rasterio.open(paths['nmt']) as src:
