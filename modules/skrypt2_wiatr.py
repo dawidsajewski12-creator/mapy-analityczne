@@ -4,7 +4,7 @@ import numpy as np
 import rasterio
 from rasterio.enums import Resampling
 import os
-from pywind import WindSimulation
+from pywind_sim import WindSimulation
 
 def align_raster(source_path, profile, resampling_method):
     with rasterio.open(source_path) as src:
