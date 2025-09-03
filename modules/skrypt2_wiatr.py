@@ -12,12 +12,12 @@ def lbm_solver(u, v, obstacles, relaxation_omega, num_iterations):
     weights = np.array([4/9, 1/9, 1/9, 1/9, 1/9, 1/36, 1/36, 1/36, 1/36], dtype=np.float32)
     c_i = np.array([[0,0], [0,1], [0,-1], [1,0], [-1,0], [1,1], [-1,1], [1,-1], [-1,-1]], dtype=np.int32)
     
-    f = np.zeros((9, nx, ny), dtype=np.float32)
-    feq = np.zeros_like(f)
-    
     # Pre-reshape for performance
     c_ix = c_i[:, 0].copy().reshape(9, 1, 1)
     c_iy = c_i[:, 1].copy().reshape(9, 1, 1)
+
+    f = np.zeros((9, nx, ny), dtype=np.float32)
+    feq = np.zeros_like(f)
     
     for i in prange(9):
         f[i] = weights[i]
