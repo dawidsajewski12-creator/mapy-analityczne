@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# Wersja 3.0: Stabilny model hydrauliczny, ostateczne poprawki
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
@@ -60,7 +61,7 @@ def run_stable_hydraulic_simulation(manning, water_depth, rainfall_intensity_ms,
 
 def main(config):
     print("\n--- Uruchamianie Skryptu 1: Analiza Podtopień (Wersja 2.0) ---")
-    paths = config['paths']; params = config['params']['flood']
+    paths, params = config['paths'], config['params']['flood']
 
     with rasterio.open(paths['nmt']) as src:
         profile = src.profile.copy()
