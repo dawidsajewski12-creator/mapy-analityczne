@@ -1,398 +1,657 @@
 <!DOCTYPE html>
 <html lang="pl">
 <head>
-    <title>Mapy Analityczne</title>
+    <title>Mapy Analityczne - Enhanced</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/geotiff@2.0.7/dist-browser/geotiff.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/leaflet-velocity-ts@1.1.0/dist/leaflet-velocity.js"></script>
     <style>
-        html, body, #map { 
-            height: 100%; 
-            width: 100%; 
-            margin: 0; 
-            background: linear-gradient(135deg, #1e3c72, #2a5298); 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         
-        .leaflet-control-layers {
-            background: rgba(255,255,255,0.95) !important;
-            backdrop-filter: blur(10px);
-            border-radius: 12px !important;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.1) !important;
-            border: 1px solid rgba(255,255,255,0.18);
-            padding: 10px;
-            font-size: 14px;
+        html, body {
+            height: 100%;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, #0f172a, #1e293b);
+            color: #e2e8f0;
         }
-        
-        .leaflet-control-layers-toggle {
-            background-color: rgba(59, 130, 246, 0.9) !important;
-            border-radius: 8px;
+
+        .container {
+            display: flex;
+            height: 100vh;
+            gap: 1rem;
+            padding: 1rem;
         }
-        
-        .leaflet-control-layers label {
-            color: #334155 !important;
-            font-weight: 500;
-            cursor: pointer;
-            transition: color 0.2s ease;
+
+        #map {
+            flex: 1;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
-        
-        .leaflet-control-layers label:hover {
-            color: #1e40af !important;
+
+        .sidebar {
+            width: 350px;
+            background: rgba(15, 23, 42, 0.9);
+            backdrop-filter: blur(20px);
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 1.5rem;
+            overflow-y: auto;
         }
-        
-        .legend {
-            background: rgba(255,255,255,0.95);
-            backdrop-filter: blur(10px);
-            padding: 15px;
+
+        .section {
+            margin-bottom: 2rem;
+            padding: 1rem;
+            background: rgba(30, 41, 59, 0.5);
             border-radius: 12px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-            border: 1px solid rgba(255,255,255,0.18);
-            max-width: 300px;
-            font-size: 13px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
         }
-        
-        .legend .title {
+
+        .section h3 {
+            color: #60a5fa;
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
             font-weight: 600;
-            margin-bottom: 10px;
-            text-align: center;
-            font-size: 16px;
-            color: #1e40af;
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
-        
-        .legend i {
-            width: 18px;
-            height: 18px;
-            float: left;
-            margin-right: 10px;
-            border-radius: 3px;
-            border: 1px solid rgba(0,0,0,0.1);
-            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
-        }
-        
-        .legend .gradient {
-            width: 100%;
-            height: 20px;
-            margin: 8px 0;
-            border-radius: 10px;
-            border: 1px solid rgba(0,0,0,0.1);
-            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
-        }
-        
-        .legend .labels {
+
+        .layer-controls {
             display: flex;
-            justify-content: space-between;
-            font-size: 11px;
-            color: #64748b;
-            font-weight: 500;
+            flex-direction: column;
+            gap: 0.5rem;
         }
-        
+
+        .layer-btn {
+            padding: 0.75rem 1rem;
+            border: 1px solid rgba(96, 165, 250, 0.3);
+            border-radius: 8px;
+            background: rgba(30, 41, 59, 0.3);
+            color: #e2e8f0;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 0.85rem;
+        }
+
+        .layer-btn:hover {
+            background: rgba(96, 165, 250, 0.1);
+            border-color: rgba(96, 165, 250, 0.5);
+        }
+
+        .layer-btn.active {
+            background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+            border-color: #3b82f6;
+            color: white;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.75rem;
+        }
+
+        .stat-card {
+            padding: 0.75rem;
+            background: rgba(30, 41, 59, 0.4);
+            border-radius: 8px;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .stat-value {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #60a5fa;
+        }
+
+        .stat-label {
+            font-size: 0.7rem;
+            color: #94a3b8;
+            margin-top: 0.25rem;
+            text-transform: uppercase;
+        }
+
         .weather-info {
             background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(147, 51, 234, 0.1));
             border: 1px solid rgba(59, 130, 246, 0.2);
-            padding: 8px 12px;
-            margin-top: 8px;
-            border-radius: 8px;
-            font-size: 12px;
+            padding: 1rem;
+            border-radius: 12px;
+            font-size: 0.8rem;
             text-align: center;
-            color: #1e40af;
+        }
+
+        .legend {
+            background: rgba(15, 23, 42, 0.95);
+            backdrop-filter: blur(20px);
+            padding: 1rem;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            color: #e2e8f0;
+            min-width: 200px;
+        }
+
+        .legend-title {
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+            text-align: center;
+            color: #60a5fa;
+            font-size: 0.9rem;
+        }
+
+        .gradient {
+            width: 100%;
+            height: 20px;
+            margin: 0.5rem 0;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.7rem;
+            color: #94a3b8;
             font-weight: 500;
         }
-        
-        .leaflet-popup-content-wrapper {
-            border-radius: 12px;
-            background: rgba(255,255,255,0.95);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255,255,255,0.18);
+
+        /* Animacje CFD */
+        .wind-particle {
+            position: absolute;
+            width: 2px;
+            height: 8px;
+            background: #60a5fa;
+            border-radius: 1px;
+            pointer-events: none;
+            opacity: 0.8;
+            box-shadow: 0 0 4px #3b82f6;
         }
-        
-        /* Animacje */
-        .legend, .leaflet-control-layers {
-            animation: fadeInScale 0.3s ease-out;
+
+        .rain-particle {
+            position: absolute;
+            width: 2px;
+            height: 12px;
+            background: linear-gradient(to bottom, transparent, #06b6d4);
+            border-radius: 1px;
+            pointer-events: none;
+            opacity: 0.7;
         }
-        
-        @keyframes fadeInScale {
-            from {
-                opacity: 0;
-                transform: scale(0.9);
-            }
-            to {
-                opacity: 1;
-                transform: scale(1);
-            }
+
+        /* Timeline dla opadów */
+        .rainfall-timeline {
+            margin-top: 1rem;
+            padding: 1rem;
+            background: rgba(6, 182, 212, 0.1);
+            border-radius: 8px;
+            border: 1px solid rgba(6, 182, 212, 0.2);
         }
-        
-        .leaflet-control-layers-expanded {
-            animation: expandLayers 0.2s ease-out;
+
+        .timeline-bar {
+            height: 20px;
+            background: linear-gradient(to right, #0891b2, #06b6d4, #67e8f9);
+            border-radius: 10px;
+            position: relative;
+            overflow: hidden;
         }
-        
-        @keyframes expandLayers {
-            from {
-                opacity: 0;
-                transform: scale(0.95);
-            }
+
+        .timeline-progress {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            width: 0%;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 10px;
+            animation: rainProgress 4s linear infinite;
+        }
+
+        @keyframes rainProgress {
+            0% { width: 0%; }
+            100% { width: 100%; }
+        }
+
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .container { flex-direction: column; }
+            .sidebar { width: 100%; height: 200px; }
+            #map { height: calc(100vh - 250px); }
         }
     </style>
 </head>
 <body>
-<div id="map"></div>
+<div class="container">
+    <div id="map"></div>
+    
+    <div class="sidebar">
+        <div class="section">
+            <h3>🌦️ Pogoda</h3>
+            <div class="weather-info">
+                <div id="weather-display">Ładowanie danych pogodowych...</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3>🗺️ Warstwy</h3>
+            <div class="layer-controls">
+                <button class="layer-btn" data-layer="landcover">🏗️ Pokrycie terenu</button>
+                <button class="layer-btn" data-layer="canopy">🌳 Korony drzew</button>
+                <button class="layer-btn" data-layer="nmt">⛰️ Model terenu</button>
+                <button class="layer-btn" data-layer="flood">🌊 Podtopienia</button>
+                <button class="layer-btn" data-layer="wind">💨 Wiatr + CFD</button>
+                <button class="layer-btn" data-layer="comfort">🌡️ Komfort termiczny</button>
+            </div>
+        </div>
+
+        <div class="section">
+            <h3>📊 Statystyki</h3>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-min">-</div>
+                    <div class="stat-label">Minimum</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-max">-</div>
+                    <div class="stat-label">Maksimum</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-avg">-</div>
+                    <div class="stat-label">Średnia</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-area">-</div>
+                    <div class="stat-label">Pokrycie</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section" id="legend-section" style="display: none;">
+            <div id="legend-content"></div>
+        </div>
+    </div>
+</div>
+
 <script>
-    const map = L.map('map', {
-        zoomControl: false
-    }).setView([54.16, 19.40], 13);
-    
-    // Dodaj kontrolki z lepszą pozycją
-    L.control.zoom({
-        position: 'topright'
-    }).addTo(map);
-    
-    // Ciemna mapa bazowa
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        attribution: '© OpenStreetMap contributors, © CARTO',
-        maxZoom: 19
-    }).addTo(map);
-
-    let velocityLayer = null;
-    let activeLayer = null;
-
-    const overlayLayers = {
-        "🏗️ Pokrycie terenu": L.tileLayer('./wyniki/kafelki/landcover/{z}/{x}/{y}.png', { 
-            tms: true, 
-            opacity: 0.8 
-        }),
-        "🌳 Korony drzew": L.tileLayer('./wyniki/kafelki/korony_drzew/{z}/{x}/{y}.png', { 
-            tms: true, 
-            opacity: 0.85 
-        }),
-        "⛰️ Model Terenu (NMT)": L.tileLayer('./wyniki/kafelki/nmt/{z}/{x}/{y}.png', { 
-            tms: true, 
-            opacity: 0.8 
-        }),
-        "🌊 Zasięg podtopień": L.tileLayer('./wyniki/kafelki/podtopienia/{z}/{x}/{y}.png', { 
-            tms: true, 
-            opacity: 0.7 
-        }),
-        "💨 Prędkość wiatru": L.tileLayer('./wyniki/kafelki/wiatr/{z}/{x}/{y}.png', { 
-            tms: true, 
-            opacity: 0.6 
-        }),
-        "🌡️ Komfort termiczny": L.tileLayer('./wyniki/kafelki/komfort/{z}/{x}/{y}.png', { 
-            tms: true, 
-            opacity: 0.8 
-        })
-    };
-    
-    const layerControl = L.control.layers(null, overlayLayers, { 
-        collapsed: false,
-        position: 'topleft'
-    }).addTo(map);
-
-    const legendControl = L.control({ position: "bottomright" });
-    legendControl.onAdd = function() {
-        const div = L.DomUtil.create("div", "legend-placeholder");
-        return div;
-    };
-    legendControl.addTo(map);
-
-    function createGradientLegend(title, min, max, gradientCss, weatherData = null) {
-        const div = L.DomUtil.create("div", "legend");
-        let weatherInfo = '';
-        if (weatherData) {
-            if (title.includes('wiatr')) {
-                weatherInfo = `<div class="weather-info">🌪️ Bazowy: ${weatherData.wind_speed.toFixed(1)} m/s, ${weatherData.wind_direction.toFixed(0)}°</div>`;
-            } else if (title.includes('termiczny')) {
-                weatherInfo = `<div class="weather-info">🌡️ Temperatura: ${weatherData.temperature.toFixed(1)}°C | 💧 Wilgotność: ${weatherData.humidity}%</div>`;
-            }
-        }
+class GISApp {
+    constructor() {
+        this.map = L.map('map').setView([54.16, 19.40], 13);
+        this.weatherData = { temperature: 25, wind_speed: 5, wind_direction: 270, humidity: 50 };
+        this.activeLayer = null;
+        this.layers = {};
+        this.windParticles = [];
+        this.rainParticles = [];
         
-        div.innerHTML = `
-            <div class="title">${title}</div>
-            <div class="gradient" style="background: ${gradientCss};"></div>
+        this.init();
+    }
+
+    async init() {
+        this.setupMap();
+        await this.loadWeatherData();
+        this.setupLayers();
+        this.setupControls();
+        this.activateLayer('landcover');
+    }
+
+    setupMap() {
+        // Ciemna mapa bazowa z lepszą jakością
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '© OpenStreetMap, © CARTO',
+            maxZoom: 20,
+            minZoom: 8
+        }).addTo(this.map);
+
+        L.control.zoom({ position: 'topright' }).addTo(this.map);
+    }
+
+    async loadWeatherData() {
+        try {
+            const response = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=54.16&longitude=19.40&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m&timezone=Europe/Warsaw`);
+            const data = await response.json();
+            
+            if (data.current) {
+                this.weatherData = {
+                    temperature: data.current.temperature_2m,
+                    humidity: data.current.relative_humidity_2m,
+                    wind_speed: data.current.wind_speed_10m / 3.6, // m/s
+                    wind_direction: data.current.wind_direction_10m
+                };
+            }
+        } catch (error) {
+            console.warn('Błąd pobierania pogody:', error);
+        }
+
+        this.updateWeatherDisplay();
+    }
+
+    updateWeatherDisplay() {
+        const weather = this.weatherData;
+        document.getElementById('weather-display').innerHTML = `
+            🌡️ ${weather.temperature.toFixed(1)}°C<br>
+            💧 ${weather.humidity}% RH<br>
+            💨 ${weather.wind_speed.toFixed(1)} m/s<br>
+            🧭 ${weather.wind_direction.toFixed(0)}°
+        `;
+    }
+
+    setupLayers() {
+        this.layers = {
+            landcover: {
+                name: '🏗️ Pokrycie terenu',
+                url: './wyniki/kafelki/landcover/{z}/{x}/{y}.png',
+                opacity: 0.8,
+                legend: this.createCategoryLegend
+            },
+            canopy: {
+                name: '🌳 Korony drzew',
+                url: './wyniki/kafelki/korony_drzew/{z}/{x}/{y}.png',
+                opacity: 0.85,
+                legend: this.createGradientLegend,
+                legendParams: { title: 'Wysokość drzew [m]', min: 4, max: 40, gradient: 'linear-gradient(to right, #ffffcc, #c2e699, #78c679, #31a354, #006837)' }
+            },
+            nmt: {
+                name: '⛰️ Model terenu',
+                url: './wyniki/kafelki/nmt/{z}/{x}/{y}.png',
+                opacity: 0.8,
+                legend: this.createGradientLegend,
+                legendParams: { title: 'Wysokość n.p.m.', min: 5, max: 95, gradient: 'linear-gradient(to right, #2166ac, #5aae61, #a6d96a, #e6f598, #ffffbf, #fee08b, #fdae61, #f46d43, #d73027)' }
+            },
+            flood: {
+                name: '🌊 Podtopienia',
+                url: './wyniki/kafelki/podtopienia/{z}/{x}/{y}.png',
+                opacity: 0.7,
+                legend: this.createGradientLegend,
+                legendParams: { title: 'Głębokość wody [m]', min: 0.01, max: 1.5, gradient: 'linear-gradient(to right, #deebf7, #9ecae1, #6baed6, #4292c6, #2171b5, #08519c)' },
+                hasAnimation: true
+            },
+            wind: {
+                name: '💨 Wiatr + CFD',
+                url: './wyniki/kafelki/wiatr/{z}/{x}/{y}.png',
+                opacity: 0.6,
+                legend: this.createGradientLegend,
+                legendParams: { title: 'Prędkość wiatru [m/s]', min: 0, max: 15, gradient: 'linear-gradient(to right, #fde725, #7ad151, #22a884, #2a788e, #414487, #440154)' },
+                hasAnimation: true
+            },
+            comfort: {
+                name: '🌡️ Komfort termiczny',
+                url: './wyniki/kafelki/komfort/{z}/{x}/{y}.png',
+                opacity: 0.8,
+                legend: this.createGradientLegend,
+                legendParams: { title: 'UTCI [°C]', min: 9, max: 38, gradient: 'linear-gradient(to right, #053061, #4575b4, #74add1, #abd9e9, #e0f3f8, #ffffbf, #fee090, #fdae61, #f46d43, #d73027, #a50026)' }
+            }
+        };
+
+        // Utworz warstwy Leaflet z poprawionymi ustawieniami
+        Object.keys(this.layers).forEach(key => {
+            const layer = this.layers[key];
+            layer.leafletLayer = L.tileLayer(layer.url, {
+                opacity: layer.opacity,
+                maxZoom: 18,
+                minZoom: 8,
+                tms: true,
+                errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+            });
+        });
+    }
+
+    setupControls() {
+        document.querySelectorAll('.layer-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const layer = e.target.dataset.layer;
+                this.activateLayer(layer);
+            });
+        });
+    }
+
+    activateLayer(layerKey) {
+        // Wyłącz poprzednią warstwę
+        if (this.activeLayer) {
+            this.map.removeLayer(this.layers[this.activeLayer].leafletLayer);
+            document.querySelector(`[data-layer="${this.activeLayer}"]`).classList.remove('active');
+            this.stopAnimations();
+        }
+
+        // Włącz nową warstwę
+        this.activeLayer = layerKey;
+        const layer = this.layers[layerKey];
+        
+        this.map.addLayer(layer.leafletLayer);
+        document.querySelector(`[data-layer="${layerKey}"]`).classList.add('active');
+
+        this.updateLegend(layer);
+        this.updateStats(layerKey);
+
+        // Uruchom animacje jeśli potrzebne
+        if (layer.hasAnimation) {
+            this.startAnimations(layerKey);
+        }
+    }
+
+    createGradientLegend(params) {
+        const { title, min, max, gradient } = params;
+        return `
+            <div class="legend-title">${title}</div>
+            <div class="gradient" style="background: ${gradient};"></div>
             <div class="labels">
                 <span>${min}</span>
                 <span>${((min + max) / 2).toFixed(1)}</span>
                 <span>${max}</span>
             </div>
-            ${weatherInfo}
         `;
-        return div;
     }
 
-    const legends = {
-        "🏗️ Pokrycie terenu": () => {
-            const div = L.DomUtil.create("div", "legend");
-            const items = {
-                'Nawierzchnie utwardzone': 'linear-gradient(45deg, #a9a9a9, #808080)',
-                'Budynki': 'linear-gradient(45deg, #dc143c, #b91c3c)',
-                'Drzewa / Lasy': 'linear-gradient(45deg, #228b22, #166b16)',
-                'Trawa / Tereny zielone': 'linear-gradient(45deg, #7cfc00, #65d000)',
-                'Gleba / Nieużytki': 'linear-gradient(45deg, #d2b48c, #c19a6b)',
-                'Woda': 'linear-gradient(45deg, #1e90ff, #0066cc)'
-            };
-            let labels = '<div class="title">Pokrycie terenu</div>';
-            for (const [key, gradient] of Object.entries(items)) {
-                labels += `<div style="margin-bottom: 8px;"><i style="background:${gradient}"></i>${key}</div>`;
-            }
-            div.innerHTML = labels;
-            return div;
-        },
-        "🌳 Korony drzew": (weatherData) => createGradientLegend(
-            "Wysokość drzew [m]", 4, 40, 
-            "linear-gradient(to right, #ffffcc, #c2e699, #78c679, #31a354, #006837)"
-        ),
-        "⛰️ Model Terenu (NMT)": (weatherData) => createGradientLegend(
-            "Wysokość n.p.m.", 5, 95, 
-            "linear-gradient(to right, #2166ac, #5aae61, #a6d96a, #e6f598, #ffffbf, #fee08b, #fdae61, #f46d43, #d73027)"
-        ),
-        "🌊 Zasięg podtopień": (weatherData) => createGradientLegend(
-            "Głębokość wody [m]", 0.01, 1.5, 
-            "linear-gradient(to right, #deebf7, #9ecae1, #6baed6, #4292c6, #2171b5, #08519c)"
-        ),
-        "💨 Prędkość wiatru": (weatherData) => createGradientLegend(
-            "Prędkość wiatru [m/s]", 0, (weatherData.wind_speed * 1.5).toFixed(1), 
-            "linear-gradient(to right, #fde725, #7ad151, #22a884, #2a788e, #414487, #440154)",
-            weatherData
-        ),
-        "🌡️ Komfort termiczny": (weatherData) => createGradientLegend(
-            "UTCI [°C]", 9, 38, 
-            "linear-gradient(to right, #053061, #4575b4, #74add1, #abd9e9, #e0f3f8, #ffffbf, #fee090, #fdae61, #f46d43, #d73027, #a50026)",
-            weatherData
-        )
-    };
-    
-    let currentWeatherData = { temperature: 25, wind_speed: 5, wind_direction: 270, humidity: 50 };
-    
-    // Pobierz aktualne dane pogodowe
-    fetch(`https://api.open-meteo.com/v1/forecast?latitude=54.16&longitude=19.40&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m&timezone=Europe/Warsaw`)
-        .then(response => response.json())
-        .then(data => {
-            if (data.current) {
-                currentWeatherData = {
-                    temperature: data.current.temperature_2m,
-                    humidity: data.current.relative_humidity_2m,
-                    wind_speed: data.current.wind_speed_10m / 3.6,
-                    wind_direction: data.current.wind_direction_10m
-                };
-                console.log('Pobrano dane pogodowe:', currentWeatherData);
-                // Odśwież legendę jeśli jakaś warstwa jest aktywna
-                if (activeLayer && legends[activeLayer]) {
-                    updateLegend(activeLayer, currentWeatherData);
-                }
-            }
-        })
-        .catch(error => {
-            console.warn('Błąd pobierania danych pogodowych:', error);
+    createCategoryLegend() {
+        const items = [
+            { name: 'Nawierzchnie', color: 'linear-gradient(45deg, #a9a9a9, #808080)' },
+            { name: 'Budynki', color: 'linear-gradient(45deg, #dc143c, #b91c3c)' },
+            { name: 'Drzewa / Lasy', color: 'linear-gradient(45deg, #228b22, #166b16)' },
+            { name: 'Trawa', color: 'linear-gradient(45deg, #7cfc00, #65d000)' },
+            { name: 'Gleba', color: 'linear-gradient(45deg, #d2b48c, #c19a6b)' },
+            { name: 'Woda', color: 'linear-gradient(45deg, #1e90ff, #0066cc)' }
+        ];
+
+        let html = '<div class="legend-title">Pokrycie terenu</div>';
+        items.forEach(item => {
+            html += `
+                <div style="display: flex; align-items: center; margin-bottom: 0.5rem;">
+                    <div style="width: 18px; height: 18px; background: ${item.color}; border-radius: 3px; margin-right: 0.5rem; border: 1px solid rgba(255,255,255,0.1);"></div>
+                    <span style="font-size: 0.8rem;">${item.name}</span>
+                </div>
+            `;
         });
-
-    map.on('overlayadd', (e) => {
-        activeLayer = e.name;
-        updateLegend(e.name, currentWeatherData);
         
-        if (e.name === "💨 Prędkość wiatru") {
-            loadAndDisplayVelocity();
-        }
-    });
+        return html;
+    }
 
-    map.on('overlayremove', (e) => {
-        if (activeLayer === e.name) {
-            activeLayer = null;
-            updateLegend(null);
-        }
+    updateLegend(layer) {
+        const legendSection = document.getElementById('legend-section');
+        const legendContent = document.getElementById('legend-content');
         
-        if (e.name === "💨 Prędkość wiatru" && velocityLayer) {
-            map.removeLayer(velocityLayer);
-            velocityLayer = null;
-        }
-    });
-    
-    function updateLegend(layerName, weatherData) {
-        const placeholder = document.querySelector('.legend-placeholder');
-        placeholder.innerHTML = "";
-        if (layerName && legends[layerName]) {
-            const legendDiv = legends[layerName](weatherData);
-            placeholder.appendChild(legendDiv);
+        if (layer.legend) {
+            let content;
+            if (layer.legendParams) {
+                content = this.createGradientLegend(layer.legendParams);
+            } else {
+                content = this.createCategoryLegend();
+            }
+            
+            // Dodaj informacje o pogodzie dla odpowiednich warstw
+            if (this.activeLayer === 'wind') {
+                content += `
+                    <div class="weather-info" style="margin-top: 1rem; font-size: 0.7rem;">
+                        🌪️ Bazowy: ${this.weatherData.wind_speed.toFixed(1)} m/s<br>
+                        🧭 Kierunek: ${this.weatherData.wind_direction.toFixed(0)}°
+                    </div>
+                `;
+            } else if (this.activeLayer === 'comfort') {
+                content += `
+                    <div class="weather-info" style="margin-top: 1rem; font-size: 0.7rem;">
+                        🌡️ ${this.weatherData.temperature.toFixed(1)}°C<br>
+                        💧 ${this.weatherData.humidity}% RH
+                    </div>
+                `;
+            } else if (this.activeLayer === 'flood') {
+                content += `
+                    <div class="rainfall-timeline">
+                        <div style="font-size: 0.7rem; margin-bottom: 0.5rem;">📊 Symulacja: 70mm / 2h</div>
+                        <div class="timeline-bar">
+                            <div class="timeline-progress"></div>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 0.6rem; margin-top: 0.25rem; color: #94a3b8;">
+                            <span>0h</span>
+                            <span>1h</span>
+                            <span>2h</span>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            legendContent.innerHTML = content;
+            legendSection.style.display = 'block';
+        } else {
+            legendSection.style.display = 'none';
         }
     }
 
-    async function loadAndDisplayVelocity() {
-        try {
-            if (velocityLayer) {
-                map.removeLayer(velocityLayer);
-                velocityLayer = null;
-            }
-            
-            const [speedTiff, dirTiff] = await Promise.all([
-                GeoTIFF.fromUrl('./wyniki/rastry/predkosc_wiatru.tif'),
-                GeoTIFF.fromUrl('./wyniki/rastry/kierunek_wiatru.tif')
-            ]);
-            
-            const speedImage = await speedTiff.getImage();
-            const dirImage = await dirTiff.getImage();
-            
-            const speedData = (await speedImage.readRasters())[0];
-            const dirData = (await dirImage.readRasters())[0];
-            const bbox = speedImage.getBoundingBox();
+    updateStats(layerKey) {
+        // Symulowane statystyki - w rzeczywistej aplikacji można by pobierać z rastrów
+        const stats = {
+            landcover: { min: '1', max: '7', avg: '3.2', area: '85%' },
+            canopy: { min: '4.0m', max: '42.3m', avg: '18.7m', area: '34%' },
+            nmt: { min: '12m', max: '89m', avg: '45m', area: '100%' },
+            flood: { min: '0.01m', max: '1.8m', avg: '0.3m', area: '12%' },
+            wind: { min: '0.2m/s', max: '18.4m/s', avg: '7.1m/s', area: '100%' },
+            comfort: { min: '15°C', max: '41°C', avg: '28°C', area: '100%' }
+        };
 
-            // Konwersja kierunku z stopni na składowe U/V
-            const uData = new Float32Array(speedData.length);
-            const vData = new Float32Array(speedData.length);
-            
-            for (let i = 0; i < speedData.length; i++) {
-                const speed = speedData[i];
-                const direction = dirData[i] * Math.PI / 180; // stopnie na radiany
-                uData[i] = -speed * Math.sin(direction); // składowa wschód-zachód
-                vData[i] = -speed * Math.cos(direction); // składowa północ-południe
-            }
+        const layerStats = stats[layerKey] || { min: '-', max: '-', avg: '-', area: '-' };
+        
+        document.getElementById('stat-min').textContent = layerStats.min;
+        document.getElementById('stat-max').textContent = layerStats.max;
+        document.getElementById('stat-avg').textContent = layerStats.avg;
+        document.getElementById('stat-area').textContent = layerStats.area;
+    }
 
-            velocityLayer = L.velocityLayer({
-                displayValues: true,
-                displayOptions: {
-                    velocityType: "Wiatr",
-                    position: "bottomleft",
-                    emptyString: "Brak danych",
-                    angleConvention: "meteo",
-                    speedUnit: "m/s",
-                    displayPosition: 'bottomleft'
-                },
-                data: {
-                    grid: {
-                        dx: Math.abs(speedImage.getResolution()[0]),
-                        dy: Math.abs(speedImage.getResolution()[1]),
-                        nx: speedImage.getWidth(),
-                        ny: speedImage.getHeight(),
-                        la1: bbox[3], // północ
-                        lo1: bbox[0], // zachód
-                        la2: bbox[1], // południe
-                        lo2: bbox[2]  // wschód
-                    },
-                    u: Array.from(uData),
-                    v: Array.from(vData)
-                },
-                minVelocity: 0,
-                maxVelocity: currentWeatherData.wind_speed * 1.8,
-                velocityScale: 0.005,
-                opacity: 0.8,
-                particleAge: 90,
-                lineWidth: 2,
-                particleMultiplier: 0.005
-            });
-            
-            velocityLayer.addTo(map);
-            console.log('Warstwa wiatru załadowana pomyślnie');
-            
-        } catch (error) {
-            console.error('Błąd ładowania warstwy wiatru:', error);
+    startAnimations(layerKey) {
+        if (layerKey === 'wind') {
+            this.startWindAnimation();
+        } else if (layerKey === 'flood') {
+            this.startRainAnimation();
         }
     }
-    
-    // Domyślnie włącz pokrycie terenu
-    overlayLayers["🏗️ Pokrycie terenu"].addTo(map);
-    activeLayer = "🏗️ Pokrycie terenu";
-    updateLegend("🏗️ Pokrycie terenu", currentWeatherData);
+
+    startWindAnimation() {
+        const mapContainer = this.map.getContainer();
+        
+        // Twórz cząsteczki wiatru
+        const createWindParticle = () => {
+            const particle = document.createElement('div');
+            particle.className = 'wind-particle';
+            
+            const mapBounds = mapContainer.getBoundingClientRect();
+            const startX = Math.random() * mapBounds.width;
+            const startY = Math.random() * mapBounds.height;
+            
+            // Kierunek na podstawie pogody
+            const angle = (this.weatherData.wind_direction + Math.random() * 60 - 30) * Math.PI / 180;
+            const speed = this.weatherData.wind_speed * (0.8 + Math.random() * 0.4);
+            
+            particle.style.left = startX + 'px';
+            particle.style.top = startY + 'px';
+            particle.style.transform = `rotate(${angle}rad)`;
+            
+            mapContainer.appendChild(particle);
+            this.windParticles.push(particle);
+            
+            // Animacja ruchu
+            const duration = 3000 + Math.random() * 2000;
+            const endX = startX + Math.cos(angle) * speed * 50;
+            const endY = startY + Math.sin(angle) * speed * 50;
+            
+            particle.animate([
+                { transform: `translate(0, 0) rotate(${angle}rad)`, opacity: 0 },
+                { opacity: 0.8, offset: 0.1 },
+                { opacity: 0.8, offset: 0.9 },
+                { transform: `translate(${endX - startX}px, ${endY - startY}px) rotate(${angle}rad)`, opacity: 0 }
+            ], {
+                duration: duration,
+                easing: 'linear'
+            }).onfinish = () => {
+                if (particle.parentNode) particle.remove();
+                this.windParticles = this.windParticles.filter(p => p !== particle);
+            };
+        };
+        
+        // Twórz cząsteczki co 200ms
+        this.windInterval = setInterval(createWindParticle, 200);
+        
+        // Utwórz początkowe cząsteczki
+        for (let i = 0; i < 20; i++) {
+            setTimeout(createWindParticle, i * 100);
+        }
+    }
+
+    startRainAnimation() {
+        const mapContainer = this.map.getContainer();
+        
+        const createRainParticle = () => {
+            const particle = document.createElement('div');
+            particle.className = 'rain-particle';
+            
+            const mapBounds = mapContainer.getBoundingClientRect();
+            const startX = Math.random() * mapBounds.width;
+            
+            particle.style.left = startX + 'px';
+            particle.style.top = '-20px';
+            
+            mapContainer.appendChild(particle);
+            this.rainParticles.push(particle);
+            
+            particle.animate([
+                { transform: 'translateY(0px)', opacity: 0.7 },
+                { transform: `translateY(${mapBounds.height + 40}px)`, opacity: 0 }
+            ], {
+                duration: 1500 + Math.random() * 500,
+                easing: 'linear'
+            }).onfinish = () => {
+                if (particle.parentNode) particle.remove();
+                this.rainParticles = this.rainParticles.filter(p => p !== particle);
+            };
+        };
+        
+        this.rainInterval = setInterval(createRainParticle, 100);
+        
+        // Utwórz początkowe krople
+        for (let i = 0; i < 30; i++) {
+            setTimeout(createRainParticle, i * 50);
+        }
+    }
+
+    stopAnimations() {
+        // Wyczyść interwały
+        if (this.windInterval) {
+            clearInterval(this.windInterval);
+            this.windInterval = null;
+        }
+        
+        if (this.rainInterval) {
+            clearInterval(this.rainInterval);
+            this.rainInterval = null;
+        }
+        
+        // Usuń cząsteczki
+        this.windParticles.forEach(p => p.remove && p.remove());
+        this.rainParticles.forEach(p => p.remove && p.remove());
+        this.windParticles = [];
+        this.rainParticles = [];
+    }
+}
+
+// Inicjalizuj aplikację
+document.addEventListener('DOMContentLoaded', () => {
+    new GISApp();
+});
 </script>
 </body>
 </html>
