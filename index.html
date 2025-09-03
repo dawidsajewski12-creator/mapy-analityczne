@@ -135,23 +135,6 @@
         const dirData = (await dirImage.readRasters())[0];
         const bbox = speedImage.getBoundingBox();
 
-        const dataGrid = {
-            header: {
-                la1: bbox[3], lo1: bbox[0],
-                la2: bbox[1], lo2: bbox[2],
-                dx: speedImage.getResolution()[0],
-                dy: -speedImage.getResolution()[1],
-                nx: speedImage.getWidth(),
-                ny: speedImage.getHeight(),
-                parameterUnit: "m.s-1",
-                parameterNumber: 2, // U component
-                parameterNumber2: 3, // V component
-                refTime: new Date().toISOString()
-            },
-            u: speedData,
-            v: dirData // leaflet-velocity uses U and V, but we can pass direction to be converted
-        };
-
         velocityLayer = L.velocityLayer({
             displayValues: true,
             displayOptions: {
@@ -161,7 +144,18 @@
                 angleConvention: "meteo",
                 speedUnit: "m/s"
             },
-            data: dataGrid,
+            data: {
+                grid: {
+                    dx: speedImage.getResolution()[0],
+                    dy: -speedImage.getResolution()[1],
+                    nx: speedImage.getWidth(),
+                    ny: speedImage.getHeight(),
+                    la1: bbox[3],
+                    lo1: bbox[0],
+                },
+                u: speedData,
+                v: dirData
+            },
             minVelocity: 0,
             maxVelocity: currentWeatherData.wind_speed * 1.5,
             velocityScale: 0.01
