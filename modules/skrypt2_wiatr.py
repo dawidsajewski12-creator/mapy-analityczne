@@ -4,7 +4,7 @@ import numpy as np
 import rasterio
 from rasterio.enums import Resampling
 import os
-from wind_sim import WindSimulation # POPRAWIONY IMPORT
+from pywind_sim import WindSimulation
 
 def align_raster(source_path, profile, resampling_method):
     with rasterio.open(source_path) as src:
@@ -12,7 +12,7 @@ def align_raster(source_path, profile, resampling_method):
     return array
 
 def main(config):
-    print("\n--- Uruchamianie Skryptu 2: Analiza Wiatru (Model Wind-Sim) ---")
+    print("\n--- Uruchamianie Skryptu 2: Analiza Wiatru (Model Pywind) ---")
     paths, params, weather = config['paths'], config['params']['wind'], config['params']['wind']
 
     print("   Etap 1: Przygotowanie danych wejściowych dla modelu...")
@@ -26,7 +26,7 @@ def main(config):
 
     nmpt = align_raster(paths['nmpt'], profile, 'bilinear')
     
-    print("   Etap 2: Uruchamianie symulacji wiatru w Wind-Sim...")
+    print("   Etap 2: Uruchamianie symulacji wiatru w Pywind...")
     sim = WindSimulation.from_numpy(nmpt, resolution=target_res)
     
     sim.run(wind_speed=weather['wind_speed'], wind_direction=weather['wind_direction'])
