@@ -51,17 +51,18 @@ def main(config):
 
     buildings_gdf = gpd.read_file(os.path.join(paths['bdot_extract'], params['bdot_building_file']))
     if not buildings_gdf.empty:
-        # --- POPRAWKA: Zmieniono 'geometries' na 'shapes' ---
-        obstacles = rasterio.features.rasterize(
+        # --- OSTATECZNA POPRAWKA: Zmiana dtype na 'uint8' ---
+        obstacles_int = rasterio.features.rasterize(
             shapes=buildings_gdf.geometry,
             out_shape=(h, w),
             transform=transform,
             fill=0,
             default_value=1,
-            dtype=np.bool_
+            dtype='uint8'  # Zmiana z np.bool_ na 'uint8'
         )
+        obstacles = obstacles_int.astype(bool) # Konwersja do boolean dla Numba
     else:
-        obstacles = np.zeros((h, w), dtype=np.bool_)
+        obstacles = np.zeros((h, w), dtype=bool)
 
     print("   Etap 2: Uruchamianie symulacji LBM CFD...")
     wind_dir_rad = np.deg2rad(270 - weather['wind_direction'])
