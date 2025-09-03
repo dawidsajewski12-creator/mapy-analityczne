@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# Wersja 3.0: Stabilna formuła UTCI i buforowanie SVF
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
@@ -43,7 +44,6 @@ def calculate_svf(nmpt, resolution, svf_path, profile):
     return svf
 
 def calculate_utci_regression(Ta, RH, v, MRT):
-    # Model regresyjny UTCI
     return -0.0006*Ta**3 + 0.0137*Ta**2 + 0.987*Ta - 2.88 + 0.0176*RH - 0.252*v**0.5 + 0.75*(MRT - Ta)
 
 def main(config, weather_data):
