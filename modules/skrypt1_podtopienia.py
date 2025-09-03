@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# modules/skrypt1_podtopienia.py - Wersja 4.0: Naprawiona symulacja hydrauliczna
+# modules/skrypt1_podtopienia.py - Wersja 4.1: Zoptymalizowane zużycie pamięci RAM
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
@@ -18,16 +18,14 @@ def green_ampt_infiltration(Ks, psi, theta_diff, cumulative_infiltrated):
 
 @njit(parallel=True)
 def hydraulic_simulation_fixed(manning, water_depth, rainfall_intensity_ms,
-                              total_time_s, dt_s, dx, psi, theta_diff, Ks, 
-                              slope_x, slope_y, nmt):
+                              total_time_s, dt_s, dx, psi, theta_diff, Ks, nmt):
     max_water_depth = np.copy(water_depth)
     cumulative_infiltrated = np.zeros_like(water_depth, dtype=np.float32)
-    
-    # Oblicz powierzchnię wody (elevacja + głębokość)
+
+    # Oblicz powierzchnię wody (elewacja + głębokość)
     water_surface = nmt + water_depth
-    
+
     num_steps = int(total_time_s / dt_s)
-    gravity = 9.81
 
     for t_step in prange(num_steps):
         # Dodaj opady przez pierwsze 2 godziny
@@ -42,7 +40,7 @@ def hydraulic_simulation_fixed(manning, water_depth, rainfall_intensity_ms,
                     actual_inf = min(potential_inf, water_depth[i, j])
                     water_depth[i, j] -= actual_inf
                     cumulative_infiltrated[i, j] += actual_inf
-        
+
         # Aktualizuj powierzchnię wody
         water_surface = nmt + water_depth
         new_water_depth = np.copy(water_depth)
@@ -55,14 +53,14 @@ def hydraulic_simulation_fixed(manning, water_depth, rainfall_intensity_ms,
                     neighbors = [
                         (r-1, c), (r+1, c), (r, c-1), (r, c+1)
                     ]
-                    
+
                     flow_out = 0.0
                     for nr, nc in neighbors:
                         # Sprawdź granice
                         if 0 <= nr < water_depth.shape[0] and 0 <= nc < water_depth.shape[1]:
                             # Gradient powierzchni wody
                             dh = water_surface[r, c] - water_surface[nr, nc]
-                            
+
                             if dh > 0:  # Woda płynie w dół
                                 # Średnia głębokość na granicy
                                 avg_depth = (water_depth[r, c] + water_depth[nr, nc]) / 2.0
@@ -70,26 +68,26 @@ def hydraulic_simulation_fixed(manning, water_depth, rainfall_intensity_ms,
                                     # Prędkość Manning-Strickler
                                     avg_manning = (manning[r, c] + manning[nr, nc]) / 2.0
                                     velocity = (avg_depth**(2.0/3.0) * np.sqrt(abs(dh) / dx)) / avg_manning
-                                    
+
                                     # Przepływ na jednostkę szerokości
                                     unit_flow = velocity * avg_depth
-                                    
+
                                     # Ograniczenie stabilności CFL
                                     max_flow = water_depth[r, c] * 0.25 / dt_s
                                     unit_flow = min(unit_flow, max_flow)
-                                    
+
                                     flow_out += unit_flow * dt_s / dx
-                    
+
                     # Aplikuj przepływ
                     new_water_depth[r, c] = max(0.0, water_depth[r, c] - flow_out)
 
         water_depth = new_water_depth
         max_water_depth = np.maximum(max_water_depth, water_depth)
-        
+
     return max_water_depth
 
 def main(config):
-    print("\n--- Uruchamianie Skryptu 1: Analiza Podtopień (Wersja 4.0) ---")
+    print("\n--- Uruchamianie Skryptu 1: Analiza Podtopień (Wersja 4.1) ---")
     paths, params = config['paths'], config['params']['flood']
 
     with rasterio.open(paths['nmt']) as src:
@@ -103,7 +101,7 @@ def main(config):
 
     print("-> Przygotowywanie danych wejściowych...")
     landcover = align_raster(paths['landcover'], profile, 'nearest')
-    
+
     # Manning coefficients
     manning = np.full(nmt.shape, params['manning_map']['default'], dtype=np.float32)
     for lc, val in params['manning_map'].items():
@@ -113,33 +111,30 @@ def main(config):
     Ks = np.full(nmt.shape, 1e-6, dtype=np.float32)
     psi = np.full(nmt.shape, 0.1, dtype=np.float32)
     theta_diff = np.full(nmt.shape, 0.3, dtype=np.float32)
-    
+
     # Dostosuj według pokrycia terenu
     Ks[landcover == 3] = 8e-5  # Lasy - wysoka infiltracja
     Ks[landcover == 5] = 3e-5  # Trawa - średnia infiltracja
     Ks[landcover == 6] = 1e-5  # Gleba - niska infiltracja
     Ks[(landcover == 1) | (landcover == 2)] = 1e-8  # Nieprzepuszczalne powierzchnie
     Ks[landcover == 7] = 1e-9  # Woda - praktycznie brak infiltracji
-    
+
     # Parametry symulacji
     rainfall_intensity_ms = (params['total_rainfall_mm'] / 1000) / (params['rainfall_duration_h'] * 3600)
     water_depth_init = np.zeros_like(nmt, dtype=np.float32)
 
-    print("-> Obliczanie nachylenia terenu...")
-    slope_y, slope_x = np.gradient(nmt, target_res)
-    
     print(f"-> Symulacja hydrauliczna: {params['total_rainfall_mm']}mm przez {params['rainfall_duration_h']}h...")
     max_depth = hydraulic_simulation_fixed(
-        manning.astype(np.float32), water_depth_init.astype(np.float32), 
-        float(rainfall_intensity_ms), float(params['simulation_duration_h'] * 3600), 
-        float(params['dt_s']), float(target_res), 
-        psi.astype(np.float32), theta_diff.astype(np.float32), Ks.astype(np.float32), 
-        slope_x.astype(np.float32), slope_y.astype(np.float32), nmt.astype(np.float32)
+        manning.astype(np.float32), water_depth_init.astype(np.float32),
+        float(rainfall_intensity_ms), float(params['simulation_duration_h'] * 3600),
+        float(params['dt_s']), float(target_res),
+        psi.astype(np.float32), theta_diff.astype(np.float32), Ks.astype(np.float32),
+        nmt.astype(np.float32)
     )
-    
+
     # Usuń wartości poniżej progu (szum numeryczny)
     max_depth[max_depth < 0.01] = 0.0
-    
+
     print("-> Zapisywanie wyniku...")
     profile.update(nodata=0.0)
     with rasterio.open(paths['output_flood_raster'], 'w', **profile) as dst:
