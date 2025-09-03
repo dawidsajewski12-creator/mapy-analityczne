@@ -17,72 +17,69 @@ def green_ampt_infiltration(Ks, psi, theta_diff, cumulative_infiltrated):
     return Ks * (1 + (psi * theta_diff) / cumulative_infiltrated)
 
 @njit(parallel=True)
+@njit(parallel=True)
 def hydraulic_simulation_fixed(manning, water_depth, rainfall_intensity_ms,
                               total_time_s, dt_s, dx, psi, theta_diff, Ks, nmt):
     max_water_depth = np.copy(water_depth)
     cumulative_infiltrated = np.zeros_like(water_depth, dtype=np.float32)
-
-    # Oblicz powierzchnię wody (elewacja + głębokość)
     water_surface = nmt + water_depth
 
     num_steps = int(total_time_s / dt_s)
 
     for t_step in prange(num_steps):
-        # Dodaj opady przez pierwsze 2 godziny
         if (t_step * dt_s) < (2.0 * 3600):
             water_depth += rainfall_intensity_ms * dt_s
 
-        # Infiltracja
         for i in range(water_depth.shape[0]):
             for j in range(water_depth.shape[1]):
                 if water_depth[i, j] > 0:
-                    potential_inf = green_ampt_infiltration(Ks[i,j], psi[i,j], theta_diff[i,j], cumulative_infiltrated[i, j]) * dt_s
+                    potential_inf = green_ampt_infiltration(Ks[i, j], psi[i, j], theta_diff[i, j], cumulative_infiltrated[i, j]) * dt_s
                     actual_inf = min(potential_inf, water_depth[i, j])
                     water_depth[i, j] -= actual_inf
                     cumulative_infiltrated[i, j] += actual_inf
 
-        # Aktualizuj powierzchnię wody
         water_surface = nmt + water_depth
         new_water_depth = np.copy(water_depth)
 
-        # Przepływ 2D - równania Saint-Venant uproszczone
         for r in prange(1, water_depth.shape[0] - 1):
             for c in prange(1, water_depth.shape[1] - 1):
-                if water_depth[r, c] > 0.001:  # Próg minimalny
-                    # Sąsiedzi
-                    neighbors = [
-                        (r-1, c), (r+1, c), (r, c-1), (r, c+1)
-                    ]
-
-                    flow_out = 0.0
+                if water_depth[r, c] > 0.001:
+                    neighbors = [(r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)]
+                    
+                    total_flow_out = 0.0
                     for nr, nc in neighbors:
-                        # Sprawdź granice
                         if 0 <= nr < water_depth.shape[0] and 0 <= nc < water_depth.shape[1]:
-                            # Gradient powierzchni wody
                             dh = water_surface[r, c] - water_surface[nr, nc]
-
-                            if dh > 0:  # Woda płynie w dół
-                                # Średnia głębokość na granicy
+                            if dh > 0:
                                 avg_depth = (water_depth[r, c] + water_depth[nr, nc]) / 2.0
                                 if avg_depth > 0.001:
-                                    # Prędkość Manning-Strickler
                                     avg_manning = (manning[r, c] + manning[nr, nc]) / 2.0
-                                    velocity = (avg_depth**(2.0/3.0) * np.sqrt(abs(dh) / dx)) / avg_manning
+                                    # Bardziej stabilne obliczenie prędkości
+                                    velocity = (avg_depth**(2.0 / 3.0) * np.sqrt(dh / dx)) / avg_manning
+                                    
+                                    # Objętość przepływu w kroku czasowym
+                                    flow_volume = velocity * avg_depth * dt_s
+                                    
+                                    # **GŁÓWNA ZMIANA: Bardziej restrykcyjne ograniczenie przepływu**
+                                    # Ograniczamy przepływ do małej części wody dostępnej w komórce,
+                                    # aby zapobiec nagłym opróżnieniom i niestabilności.
+                                    max_transferable_volume = water_depth[r, c] * dx * 0.1 # Max 10% objętości
+                                    
+                                    flow_volume = min(flow_volume, max_transferable_volume)
+                                    
+                                    if flow_volume > 0:
+                                       # Aktualizuj głębokości wody w obu komórkach
+                                       new_water_depth[r,c] -= flow_volume / dx
+                                       new_water_depth[nr,nc] += flow_volume / dx
 
-                                    # Przepływ na jednostkę szerokości
-                                    unit_flow = velocity * avg_depth
 
-                                    # Ograniczenie stabilności CFL
-                                    max_flow = water_depth[r, c] * 0.25 / dt_s
-                                    unit_flow = min(unit_flow, max_flow)
-
-                                    flow_out += unit_flow * dt_s / dx
-
-                    # Aplikuj przepływ
-                    new_water_depth[r, c] = max(0.0, water_depth[r, c] - flow_out)
-
-        water_depth = new_water_depth
+        water_depth = np.maximum(0.0, new_water_depth) # Upewnij się, że woda nie jest ujemna
         max_water_depth = np.maximum(max_water_depth, water_depth)
+        
+        # Opcjonalnie: Dodaj warunek sprawdzający, aby przerwać w razie problemów
+        if np.isnan(water_depth).any() or np.isinf(water_depth).any():
+            print(f"Wykryto niestabilność w kroku {t_step}! Przerywam symulację.")
+            break
 
     return max_water_depth
 
