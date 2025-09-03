@@ -10,7 +10,6 @@ from numba import njit, prange
 @njit(parallel=True)
 def lbm_solver(u, v, obstacles, relaxation_omega, num_iterations):
     nx, ny = u.shape
-    # N, S, E, W, NE, NW, SE, SW, C
     weights = np.array([4/9, 1/9, 1/9, 1/9, 1/9, 1/36, 1/36, 1/36, 1/36], dtype=np.float32)
     c_i = np.array([[0,0], [0,1], [0,-1], [1,0], [-1,0], [1,1], [-1,1], [1,-1], [-1,-1]], dtype=np.int32)
     
@@ -19,19 +18,15 @@ def lbm_solver(u, v, obstacles, relaxation_omega, num_iterations):
         f[i] = weights[i]
 
     for it in prange(num_iterations):
-        # Propagacja
         for i in prange(9):
             f[i] = np.roll(np.roll(f[i], c_i[i,0], axis=0), c_i[i,1], axis=1)
 
-        # Kolizja
         rho = np.sum(f, axis=0)
         ux = np.sum(f * c_i[:,0].reshape(9,1,1), axis=0) / rho
         uy = np.sum(f * c_i[:,1].reshape(9,1,1), axis=0) / rho
 
-        # Warunki brzegowe (przeszkody)
         ux[obstacles] = 0; uy[obstacles] = 0
 
-        # Równowaga
         feq = np.zeros_like(f)
         for i in prange(9):
             cu = c_i[i,0] * ux + c_i[i,1] * uy
@@ -56,8 +51,9 @@ def main(config):
 
     buildings_gdf = gpd.read_file(os.path.join(paths['bdot_extract'], params['bdot_building_file']))
     if not buildings_gdf.empty:
+        # --- POPRAWKA: Zmieniono 'geometries' na 'shapes' ---
         obstacles = rasterio.features.rasterize(
-            geometries=buildings_gdf.geometry,
+            shapes=buildings_gdf.geometry,
             out_shape=(h, w),
             transform=transform,
             fill=0,
