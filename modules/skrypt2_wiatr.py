@@ -22,8 +22,10 @@ def lbm_solver(u, v, obstacles, relaxation_omega, num_iterations):
             f[i] = np.roll(np.roll(f[i], c_i[i,0], axis=0), c_i[i,1], axis=1)
 
         rho = np.sum(f, axis=0)
-        ux = np.sum(f * c_i[:,0].reshape(9,1,1), axis=0) / rho
-        uy = np.sum(f * c_i[:,1].reshape(9,1,1), axis=0) / rho
+        
+        # --- OSTATECZNA POPRAWKA: Dodano .copy() aby zapewnić ciągłość pamięci ---
+        ux = np.sum(f * c_i[:,0].copy().reshape(9,1,1), axis=0) / rho
+        uy = np.sum(f * c_i[:,1].copy().reshape(9,1,1), axis=0) / rho
 
         ux[obstacles] = 0; uy[obstacles] = 0
 
@@ -51,16 +53,15 @@ def main(config):
 
     buildings_gdf = gpd.read_file(os.path.join(paths['bdot_extract'], params['bdot_building_file']))
     if not buildings_gdf.empty:
-        # --- OSTATECZNA POPRAWKA: Zmiana dtype na 'uint8' ---
         obstacles_int = rasterio.features.rasterize(
             shapes=buildings_gdf.geometry,
             out_shape=(h, w),
             transform=transform,
             fill=0,
             default_value=1,
-            dtype='uint8'  # Zmiana z np.bool_ na 'uint8'
+            dtype='uint8'
         )
-        obstacles = obstacles_int.astype(bool) # Konwersja do boolean dla Numba
+        obstacles = obstacles_int.astype(bool)
     else:
         obstacles = np.zeros((h, w), dtype=bool)
 
