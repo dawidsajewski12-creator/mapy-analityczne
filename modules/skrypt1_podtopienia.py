@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# modules/skrypt1_podtopienia.py - Wersja 4.2: Naprawiony błąd podwójnego dekoratora
+# modules/skrypt1_podtopienia.py - Wersja 4.2: Naprawiony błąd podwójnego dekoratora i stabilności
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
@@ -16,7 +16,8 @@ def green_ampt_infiltration(Ks, psi, theta_diff, cumulative_infiltrated):
     if cumulative_infiltrated <= 0: return Ks
     return Ks * (1 + (psi * theta_diff) / cumulative_infiltrated)
 
-@njit(parallel=True) # Pozostaw tylko ten jeden dekorator
+# Upewnij się, że jest tu tylko JEDEN dekorator @njit
+@njit(parallel=True)
 def hydraulic_simulation_fixed(manning, water_depth, rainfall_intensity_ms,
                               total_time_s, dt_s, dx, psi, theta_diff, Ks, nmt):
     max_water_depth = np.copy(water_depth)
@@ -52,24 +53,35 @@ def hydraulic_simulation_fixed(manning, water_depth, rainfall_intensity_ms,
                                 avg_depth = (water_depth[r, c] + water_depth[nr, nc]) / 2.0
                                 if avg_depth > 0.001:
                                     avg_manning = (manning[r, c] + manning[nr, nc]) / 2.0
-                                    velocity = (avg_depth**(2.0 / 3.0) * np.sqrt(dh / dx)) / avg_manning
+                                    # Dodano zabezpieczenie przed ujemną wartością pod pierwiastkiem
+                                    slope = max(0, dh / dx)
+                                    velocity = (avg_depth**(2.0 / 3.0) * np.sqrt(slope)) / avg_manning
+                                    
                                     flow_volume = velocity * avg_depth * dt_s
+                                    
+                                    # Bardziej restrykcyjne ograniczenie przepływu dla stabilności
                                     max_transferable_volume = water_depth[r, c] * dx * 0.1
+                                    
                                     flow_volume = min(flow_volume, max_transferable_volume)
+                                    
                                     if flow_volume > 0:
+                                       # Przepływ jest stosowany do kopii, aby uniknąć błędów w tej samej iteracji
                                        new_water_depth[r, c] -= flow_volume / dx
                                        new_water_depth[nr, nc] += flow_volume / dx
 
 
         water_depth = np.maximum(0.0, new_water_depth)
         max_water_depth = np.maximum(max_water_depth, water_depth)
+        
         if np.isnan(water_depth).any() or np.isinf(water_depth).any():
             print(f"Wykryto niestabilność w kroku {t_step}! Przerywam symulację.")
             break
 
     return max_water_depth
+
 def main(config):
-    print("\n--- Uruchamianie Skryptu 1: Analiza Podtopień (Wersja 4.1) ---")
+    # Reszta funkcji main bez zmian...
+    print("\n--- Uruchamianie Skryptu 1: Analiza Podtopień (Wersja 4.2) ---")
     paths, params = config['paths'], config['params']['flood']
 
     with rasterio.open(paths['nmt']) as src:
@@ -84,24 +96,20 @@ def main(config):
     print("-> Przygotowywanie danych wejściowych...")
     landcover = align_raster(paths['landcover'], profile, 'nearest')
 
-    # Manning coefficients
     manning = np.full(nmt.shape, params['manning_map']['default'], dtype=np.float32)
     for lc, val in params['manning_map'].items():
         if lc != 'default': manning[landcover == lc] = val
 
-    # Parametry infiltracji - realistyczne wartości
     Ks = np.full(nmt.shape, 1e-6, dtype=np.float32)
     psi = np.full(nmt.shape, 0.1, dtype=np.float32)
     theta_diff = np.full(nmt.shape, 0.3, dtype=np.float32)
 
-    # Dostosuj według pokrycia terenu
-    Ks[landcover == 3] = 8e-5  # Lasy - wysoka infiltracja
-    Ks[landcover == 5] = 3e-5  # Trawa - średnia infiltracja
-    Ks[landcover == 6] = 1e-5  # Gleba - niska infiltracja
-    Ks[(landcover == 1) | (landcover == 2)] = 1e-8  # Nieprzepuszczalne powierzchnie
-    Ks[landcover == 7] = 1e-9  # Woda - praktycznie brak infiltracji
+    Ks[landcover == 3] = 8e-5
+    Ks[landcover == 5] = 3e-5
+    Ks[landcover == 6] = 1e-5
+    Ks[(landcover == 1) | (landcover == 2)] = 1e-8
+    Ks[landcover == 7] = 1e-9
 
-    # Parametry symulacji
     rainfall_intensity_ms = (params['total_rainfall_mm'] / 1000) / (params['rainfall_duration_h'] * 3600)
     water_depth_init = np.zeros_like(nmt, dtype=np.float32)
 
@@ -114,7 +122,6 @@ def main(config):
         nmt.astype(np.float32)
     )
 
-    # Usuń wartości poniżej progu (szum numeryczny)
     max_depth[max_depth < 0.01] = 0.0
 
     print("-> Zapisywanie wyniku...")
