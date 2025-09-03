@@ -2,7 +2,6 @@
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
-from scipy.ndimage import gaussian_filter
 import geopandas as gpd
 import os
 from numba import njit, prange
@@ -14,22 +13,31 @@ def lbm_solver(u, v, obstacles, relaxation_omega, num_iterations):
     c_i = np.array([[0,0], [0,1], [0,-1], [1,0], [-1,0], [1,1], [-1,1], [1,-1], [-1,-1]], dtype=np.int32)
     
     f = np.zeros((9, nx, ny), dtype=np.float32)
+    feq = np.zeros_like(f)
+    
     for i in prange(9):
         f[i] = weights[i]
 
     for it in prange(num_iterations):
+        # --- OSTATECZNA POPRAWKA: Ręczna implementacja np.roll ---
         for i in prange(9):
-            f[i] = np.roll(np.roll(f[i], c_i[i,0], axis=0), c_i[i,1], axis=1)
+            # Propagacja (streaming)
+            for r in range(nx):
+                for c in range(ny):
+                    nr, nc = r - c_i[i, 0], c - c_i[i, 1]
+                    if nr >= 0 and nr < nx and nc >= 0 and nc < ny:
+                        f[i, r, c] = f[i, nr, nc]
 
+        # Obliczenie makroskopowych wielkości
         rho = np.sum(f, axis=0)
-        
-        # --- OSTATECZNA POPRAWKA: Dodano .copy() aby zapewnić ciągłość pamięci ---
-        ux = np.sum(f * c_i[:,0].copy().reshape(9,1,1), axis=0) / rho
-        uy = np.sum(f * c_i[:,1].copy().reshape(9,1,1), axis=0) / rho
+        ux = np.sum(f * c_i[:,0].reshape(9,1,1), axis=0) / rho
+        uy = np.sum(f * c_i[:,1].reshape(9,1,1), axis=0) / rho
 
-        ux[obstacles] = 0; uy[obstacles] = 0
+        # Warunki brzegowe (przeszkody) - zerowa prędkość
+        ux[obstacles] = 0
+        uy[obstacles] = 0
 
-        feq = np.zeros_like(f)
+        # Kolizja
         for i in prange(9):
             cu = c_i[i,0] * ux + c_i[i,1] * uy
             feq[i] = weights[i] * rho * (1 + 3*cu + 4.5*cu**2 - 1.5*(ux**2+uy**2))
@@ -51,19 +59,24 @@ def main(config):
         transform = src.transform * src.transform.scale(1/scale, 1/scale)
         profile.update({'height': h, 'width': w, 'transform': transform, 'dtype': 'float32'})
 
-    buildings_gdf = gpd.read_file(os.path.join(paths['bdot_extract'], params['bdot_building_file']))
-    if not buildings_gdf.empty:
-        obstacles_int = rasterio.features.rasterize(
-            shapes=buildings_gdf.geometry,
-            out_shape=(h, w),
-            transform=transform,
-            fill=0,
-            default_value=1,
-            dtype='uint8'
-        )
-        obstacles = obstacles_int.astype(bool)
-    else:
+    bdot_path = os.path.join(paths['bdot_extract'], params['bdot_building_file'])
+    if not os.path.exists(bdot_path):
+        print(f"OSTRZEŻENIE: Plik z budynkami nie istnieje: {bdot_path}. Symulacja bez przeszkód.")
         obstacles = np.zeros((h, w), dtype=bool)
+    else:
+        buildings_gdf = gpd.read_file(bdot_path)
+        if not buildings_gdf.empty:
+            obstacles_int = rasterio.features.rasterize(
+                shapes=buildings_gdf.geometry,
+                out_shape=(h, w),
+                transform=transform,
+                fill=0,
+                default_value=1,
+                dtype='uint8'
+            )
+            obstacles = obstacles_int.astype(bool)
+        else:
+            obstacles = np.zeros((h, w), dtype=bool)
 
     print("   Etap 2: Uruchamianie symulacji LBM CFD...")
     wind_dir_rad = np.deg2rad(270 - weather['wind_direction'])
