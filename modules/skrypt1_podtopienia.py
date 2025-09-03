@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# modules/skrypt1_podtopienia.py - Wersja 4.1: Zoptymalizowane zużycie pamięci RAM
+# modules/skrypt1_podtopienia.py - Wersja 4.2: Naprawiony błąd podwójnego dekoratora
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
@@ -16,8 +16,7 @@ def green_ampt_infiltration(Ks, psi, theta_diff, cumulative_infiltrated):
     if cumulative_infiltrated <= 0: return Ks
     return Ks * (1 + (psi * theta_diff) / cumulative_infiltrated)
 
-@njit(parallel=True)
-@njit(parallel=True)
+@njit(parallel=True) # Pozostaw tylko ten jeden dekorator
 def hydraulic_simulation_fixed(manning, water_depth, rainfall_intensity_ms,
                               total_time_s, dt_s, dx, psi, theta_diff, Ks, nmt):
     max_water_depth = np.copy(water_depth)
@@ -45,8 +44,7 @@ def hydraulic_simulation_fixed(manning, water_depth, rainfall_intensity_ms,
             for c in prange(1, water_depth.shape[1] - 1):
                 if water_depth[r, c] > 0.001:
                     neighbors = [(r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)]
-                    
-                    total_flow_out = 0.0
+
                     for nr, nc in neighbors:
                         if 0 <= nr < water_depth.shape[0] and 0 <= nc < water_depth.shape[1]:
                             dh = water_surface[r, c] - water_surface[nr, nc]
@@ -54,35 +52,22 @@ def hydraulic_simulation_fixed(manning, water_depth, rainfall_intensity_ms,
                                 avg_depth = (water_depth[r, c] + water_depth[nr, nc]) / 2.0
                                 if avg_depth > 0.001:
                                     avg_manning = (manning[r, c] + manning[nr, nc]) / 2.0
-                                    # Bardziej stabilne obliczenie prędkości
                                     velocity = (avg_depth**(2.0 / 3.0) * np.sqrt(dh / dx)) / avg_manning
-                                    
-                                    # Objętość przepływu w kroku czasowym
                                     flow_volume = velocity * avg_depth * dt_s
-                                    
-                                    # **GŁÓWNA ZMIANA: Bardziej restrykcyjne ograniczenie przepływu**
-                                    # Ograniczamy przepływ do małej części wody dostępnej w komórce,
-                                    # aby zapobiec nagłym opróżnieniom i niestabilności.
-                                    max_transferable_volume = water_depth[r, c] * dx * 0.1 # Max 10% objętości
-                                    
+                                    max_transferable_volume = water_depth[r, c] * dx * 0.1
                                     flow_volume = min(flow_volume, max_transferable_volume)
-                                    
                                     if flow_volume > 0:
-                                       # Aktualizuj głębokości wody w obu komórkach
-                                       new_water_depth[r,c] -= flow_volume / dx
-                                       new_water_depth[nr,nc] += flow_volume / dx
+                                       new_water_depth[r, c] -= flow_volume / dx
+                                       new_water_depth[nr, nc] += flow_volume / dx
 
 
-        water_depth = np.maximum(0.0, new_water_depth) # Upewnij się, że woda nie jest ujemna
+        water_depth = np.maximum(0.0, new_water_depth)
         max_water_depth = np.maximum(max_water_depth, water_depth)
-        
-        # Opcjonalnie: Dodaj warunek sprawdzający, aby przerwać w razie problemów
         if np.isnan(water_depth).any() or np.isinf(water_depth).any():
             print(f"Wykryto niestabilność w kroku {t_step}! Przerywam symulację.")
             break
 
     return max_water_depth
-
 def main(config):
     print("\n--- Uruchamianie Skryptu 1: Analiza Podtopień (Wersja 4.1) ---")
     paths, params = config['paths'], config['params']['flood']
