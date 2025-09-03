@@ -12,7 +12,6 @@ def lbm_solver(u, v, obstacles, relaxation_omega, num_iterations):
     weights = np.array([4/9, 1/9, 1/9, 1/9, 1/9, 1/36, 1/36, 1/36, 1/36], dtype=np.float32)
     c_i = np.array([[0,0], [0,1], [0,-1], [1,0], [-1,0], [1,1], [-1,1], [1,-1], [-1,-1]], dtype=np.int32)
     
-    # Pre-reshape for performance
     c_ix = c_i[:, 0].copy().reshape(9, 1, 1)
     c_iy = c_i[:, 1].copy().reshape(9, 1, 1)
 
@@ -28,19 +27,15 @@ def lbm_solver(u, v, obstacles, relaxation_omega, num_iterations):
             # Propagacja (streaming)
             f[i] = np.roll(f[i], (c_i[i,0], c_i[i,1]), axis=(0,1))
             
-        # Obliczenie makroskopowych wielkości
         rho = np.sum(f, axis=0)
-        # Unikaj dzielenia przez zero
         rho[rho == 0] = 1 
 
         ux = np.sum(f * c_ix, axis=0) / rho
         uy = np.sum(f * c_iy, axis=0) / rho
 
-        # Warunki brzegowe (przeszkody) - zerowa prędkość
         ux[obstacles] = 0
         uy[obstacles] = 0
 
-        # Kolizja
         for i in prange(9):
             cu = c_i[i,0] * ux + c_i[i,1] * uy
             feq[i] = weights[i] * rho * (1 + 3*cu + 4.5*cu**2 - 1.5*(ux**2+uy**2))
