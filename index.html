@@ -416,6 +416,16 @@ class GISApp {
         this.activeLayer = layerKey;
         const layer = this.layers[layerKey];
         
+        // Debug: sprawdź czy kafelki istnieją
+        const testUrl = layer.url.replace('{z}', '13').replace('{x}', '4583').replace('{y}', '2671');
+        fetch(testUrl).then(response => {
+            if (response.ok) {
+                console.log(`✅ Kafelki dla ${layerKey} są dostępne`);
+            } else {
+                console.warn(`⚠️ Problemy z kafelkami dla ${layerKey}: ${response.status}`);
+            }
+        }).catch(e => console.warn(`⚠️ Nie można sprawdzić kafelków ${layerKey}:`, e));
+        
         this.map.addLayer(layer.leafletLayer);
         document.querySelector(`[data-layer="${layerKey}"]`).classList.add('active');
 
