@@ -12,8 +12,7 @@ def align_raster(source_path, profile, resampling_method):
 
 @njit
 def green_ampt_infiltration(Ks, psi, theta_diff, cumulative_infiltrated):
-    if cumulative_infiltrated == 0:
-        return Ks * (1 + (psi * theta_diff) / 1e-9)
+    if cumulative_infiltrated <= 0: return Ks
     return Ks * (1 + (psi * theta_diff) / cumulative_infiltrated)
 
 @njit(parallel=True)
@@ -37,7 +36,7 @@ def run_stable_hydraulic_simulation(manning, water_depth, rainfall_intensity_ms,
         for i in range(water_depth.shape[0]):
             for j in range(water_depth.shape[1]):
                  if water_depth[i, j] > 0:
-                    potential_infiltration = green_ampt_infiltration(Ks[i,j], psi[i,j], theta_diff[i,j], t_step * dt_s, cumulative_infiltrated[i, j]) * dt_s
+                    potential_infiltration = green_ampt_infiltration(Ks[i,j], psi[i,j], theta_diff[i,j], cumulative_infiltrated[i, j]) * dt_s
                     actual_infiltration = min(potential_infiltration, water_depth[i, j])
                     water_depth[i, j] -= actual_infiltration
                     cumulative_infiltrated[i, j] += actual_infiltration
@@ -60,16 +59,14 @@ def run_stable_hydraulic_simulation(manning, water_depth, rainfall_intensity_ms,
     return max_water_depth
 
 def main(config):
-    print("\n--- Uruchamianie Skryptu 1: Analiza Podtopień (Wersja Zoptymalizowana) ---")
-    paths = config['paths']
-    params = config['params']['flood']
+    print("\n--- Uruchamianie Skryptu 1: Analiza Podtopień (Wersja 2.0) ---")
+    paths = config['paths']; params = config['params']['flood']
 
     with rasterio.open(paths['nmt']) as src:
         profile = src.profile.copy()
         target_res = params['target_res']
         scale_factor = src.res[0] / target_res
-        new_width = int(src.width * scale_factor)
-        new_height = int(src.height * scale_factor)
+        new_width = int(src.width * scale_factor); new_height = int(src.height * scale_factor)
         transform = src.transform * src.transform.scale(1/scale_factor, 1/scale_factor)
         profile.update({'height': new_height, 'width': new_width, 'transform': transform, 'dtype': 'float32'})
         nmt = src.read(1, out_shape=(new_height, new_width), resampling=Resampling.bilinear)
@@ -77,12 +74,10 @@ def main(config):
     print("-> Przygotowywanie danych wejściowych...")
     landcover = align_raster(paths['landcover'], profile, 'nearest')
     manning = np.full(nmt.shape, params['manning_map']['default'], dtype=np.float32)
-    for lc_class, man_val in params['manning_map'].items():
-        if lc_class != 'default': manning[landcover == lc_class] = man_val
+    for lc, val in params['manning_map'].items():
+        if lc != 'default': manning[landcover == lc] = val
 
-    Ks = np.full(nmt.shape, 1e-6, dtype=np.float32)
-    psi = np.full(nmt.shape, 0.1, dtype=np.float32)
-    theta_diff = np.full(nmt.shape, 0.4, dtype=np.float32)
+    Ks = np.full(nmt.shape, 1e-6, dtype=np.float32); psi = np.full(nmt.shape, 0.1, dtype=np.float32); theta_diff = np.full(nmt.shape, 0.4, dtype=np.float32)
     Ks[landcover == 3] = 5e-5; Ks[landcover == 5] = 1e-5; Ks[landcover == 6] = 2e-6
     Ks[(landcover == 1) | (landcover == 2) | (landcover == 7)] = 1e-9
     
@@ -93,25 +88,17 @@ def main(config):
     slope_y, slope_x = np.gradient(nmt, target_res)
 
     print("-> Rozpoczynanie dynamicznej symulacji hydraulicznej...")
-    # --- POPRAWKA: Konwersja wszystkich tablic na float32 ---
     max_depth = run_stable_hydraulic_simulation(
-        manning.astype(np.float32), 
-        water_depth_init.astype(np.float32), 
-        rainfall_intensity_ms,
-        params['simulation_duration_h'] * 3600, 
-        params['dt_s'],
-        target_res, 
-        psi.astype(np.float32), 
-        theta_diff.astype(np.float32), 
-        Ks.astype(np.float32), 
-        slope_x.astype(np.float32), 
-        slope_y.astype(np.float32)
+        manning.astype(np.float32), water_depth_init.astype(np.float32), 
+        float(rainfall_intensity_ms), float(params['simulation_duration_h'] * 3600), 
+        float(params['dt_s']), float(target_res), 
+        psi.astype(np.float32), theta_diff.astype(np.float32), Ks.astype(np.float32), 
+        slope_x.astype(np.float32), slope_y.astype(np.float32)
     )
     
     print("-> Zapisywanie wyniku...")
-    output_path = paths['output_flood_raster']
-    with rasterio.open(output_path, 'w', **profile) as dst:
+    with rasterio.open(paths['output_flood_raster'], 'w', **profile) as dst:
         dst.write(max_depth, 1)
 
-    print(f"--- Skrypt 1 zakończony pomyślnie! Wynik: {output_path} ---")
-    return output_path
+    print(f"--- Skrypt 1 zakończony pomyślnie! Wynik: {paths['output_flood_raster']} ---")
+    return paths['output_flood_raster']
