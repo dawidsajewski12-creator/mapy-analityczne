@@ -1,94 +1,57 @@
-import numpy as np, rasterio, laspy, os, gc
-from numba import njit
-from concurrent.futures import ProcessPoolExecutor
-
-@njit
-def create_chm_streaming(points_x, points_y, points_z, inv_transform_coeffs, 
-                        width, height, nodata_value):
-    """Zoptymalizowana funkcja bez duplikowania danych"""
-    chm = np.full((height, width), nodata_value, dtype=np.float32)
-    inv_a, inv_b, inv_c, inv_d, inv_e, inv_f = inv_transform_coeffs
-    
-    # Przetwarzanie punktów w blokach po 10k
-    chunk_size = 10000
-    for start in range(0, len(points_x), chunk_size):
-        end = min(start + chunk_size, len(points_x))
-        
-        for i in range(start, end):
-            col = inv_a * points_x[i] + inv_b * points_y[i] + inv_c
-            row = inv_d * points_x[i] + inv_e * points_y[i] + inv_f
-            
-            col_idx, row_idx = int(col), int(row)
-            if 0 <= row_idx < height and 0 <= col_idx < width:
-                if points_z[i] > chm[row_idx, col_idx]:
-                    chm[row_idx, col_idx] = points_z[i]
-    return chm
+# /modules/skrypt0_landcover.py
+import os, zipfile, numpy as np, rasterio, gc
+from rasterio.features import rasterize
+import geopandas as gpd
 
 def main(config):
-    print("\n--- Skrypt 0: Lidar (Zoptymalizowany dla RAM) ---")
-    paths = config['paths']; params = config['params']['lidar']
+    print("\n--- Skrypt 0: Pokrycie Terenu (Zoptymalizowany) ---")
+    paths = config['paths']; params = config['params']['landcover']
     
-    # Adaptacyjna rozdzielczość
+    # Dynamiczne skalowanie rozdzielczości bazując na dostępnej RAM
     import psutil
-    if psutil.virtual_memory().available < 6e9:  # Mniej niż 6GB
-        params['target_res'] = max(params['target_res'], 2.0)
+    available_ram_gb = psutil.virtual_memory().available / (1024**3)
+    if available_ram_gb < 4:  # Jeśli mniej niż 4GB
+        params['target_res'] = max(params['target_res'], 5.0)  # Zwiększ rozdzielczość
     
-    with rasterio.open(paths['nmt']) as src:
-        profile = src.profile.copy()
-        scale_factor = src.res[0] / params['target_res']
-        profile.update({
-            'width': int(src.width * scale_factor),
-            'height': int(src.height * scale_factor),
-            'transform': src.transform * src.transform.scale(1/scale_factor, 1/scale_factor),
-            'dtype': 'float32', 'nodata': -9999.0,
-            'compress': 'lzw', 'tiled': True  # Kompresja dla oszczędności
-        })
-        nmt_arr = src.read(1); nmt_transform = src.transform
-
-    laz_files = [os.path.join(paths['laz_folder'], f) 
-                for f in os.listdir(paths['laz_folder']) if f.endswith(('.laz', '.las'))]
+    with rasterio.open(paths['nmt']) as src_nmt:
+        base_profile = src_nmt.profile.copy()
+        scale_factor = base_profile['transform'].a / params['target_res']
+        ny, nx = int(src_nmt.height * scale_factor), int(src_nmt.width * scale_factor)
+        transform = base_profile['transform'] * base_profile['transform'].scale(1/scale_factor, 1/scale_factor)
     
-    # Streaming processing - po jednym pliku
-    print(f"-> Przetwarzanie {len(laz_files)} plików LAZ w trybie streaming...")
-    combined_points = []
+    # Inicjalizacja rastra w mniejszych blokach
+    landcover_raster = np.zeros((ny, nx), dtype=np.uint8)  # uint8 zamiast float32 = 4x mniej RAM
     
-    for i, fp in enumerate(laz_files):
-        if i % 5 == 0:  # Progress co 5 plików
-            print(f"  -> Plik {i+1}/{len(laz_files)}")
-        
-        result = process_laz_file(fp, params['min_tree_height'], 
-                                 params['max_plausible_tree_height'], nmt_arr, nmt_transform)
-        if result is not None:
-            combined_points.append(result)
+    # Przetwarzanie plików po kolei z czyszczeniem pamięci
+    landcover_paths = find_and_extract_bdot_layers(paths['bdot_zip'], params['target_landcover_files'], paths['bdot_extract'])
+    
+    for fpath in landcover_paths:
+        code = next((key for key in params['classification_map'] if key in os.path.basename(fpath)), None)
+        if code:
+            class_id, _ = params['classification_map'][code]
+            gdf = gpd.read_file(fpath)
+            if gdf.crs != base_profile['crs']: 
+                gdf = gdf.to_crs(base_profile['crs'])
             
-        # Wyczyść co 10 plików
-        if i % 10 == 0:
+            # Rasteryzacja w blokach dla dużych geometrii
+            geometries = [(geom, class_id) for geom in gdf.geometry]
+            class_mask = rasterize(shapes=geometries, out_shape=(ny, nx), 
+                                 transform=transform, fill=0, dtype=np.uint8)
+            landcover_raster[class_mask > 0] = class_mask[class_mask > 0]
+            
+            # Wyczyść pamięć po każdym pliku
+            del gdf, geometries, class_mask
             gc.collect()
     
-    if not combined_points:
-        print("BŁĄD: Brak punktów roślinności")
-        return create_empty_raster(profile)
-    
-    # Połącz wyniki z kontrolą pamięci
-    print("-> Łączenie wyników...")
-    all_points = np.vstack(combined_points)
-    del combined_points; gc.collect()
-    
-    # Tworzenie CHM
-    inv_transform = ~profile['transform']
-    inv_coeffs = inv_transform.to_gdal()
-    coeffs = (inv_coeffs[1], inv_coeffs[2], inv_coeffs[0], 
-              inv_coeffs[4], inv_coeffs[5], inv_coeffs[3])
-    
-    chm_raster = create_chm_streaming(
-        all_points[:, 0], all_points[:, 1], all_points[:, 2],
-        coeffs, profile['width'], profile['height'], profile['nodata']
-    )
-    
     # Zapisz wynik
-    with rasterio.open(paths['output_crowns_raster'], 'w', **profile) as dst:
-        dst.write(chm_raster, 1)
+    output_path = paths['output_landcover_raster']
+    out_profile = base_profile.copy()
+    out_profile.update(height=ny, width=nx, transform=transform, dtype='uint8', 
+                      nodata=0, compress='lzw', tiled=True, blockxsize=512, blockysize=512)
     
-    print(f"-> Oszczędność: {len(all_points)/1e6:.1f}M punktów przetworzone")
-    del all_points, chm_raster; gc.collect()
-    return paths['output_crowns_raster'], None
+    with rasterio.open(output_path, 'w', **out_profile) as dst:
+        dst.write(landcover_raster, 1)
+    
+    print(f"-> Oszczędność pamięci: użyto {(ny*nx)/1e6:.1f}M pikseli w uint8")
+    del landcover_raster; gc.collect()
+    return output_path
