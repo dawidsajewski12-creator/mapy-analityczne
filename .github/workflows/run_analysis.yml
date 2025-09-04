@@ -1,0 +1,22 @@
+name: Uruchom Codzienną Analizę w Colab
+
+on:
+  schedule:
+    # Uruchamia skrypt co 3 godziny
+    - cron: '0 */3 * * *'
+  workflow_dispatch: # Pozwala na ręczne uruchomienie z panelu Actions
+
+jobs:
+  run-colab-notebook:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Uruchomienie notatnika Colab i wykonanie analiz
+        uses: aymendjane/colab-run@v1
+        with:
+          # Podaj bezpośredni link do Twojego notatnika w Colab
+          notebook: 'https://colab.research.google.com/drive/1_E6z7y-GPv52gTzNwcFjTLVTYj6xTeq5#scrollTo=7ZOryI9pCZ8K'
+          
+          # Bezpieczne przekazanie sekretów do środowiska Colab
+          env:
+            GH_PAT: ${{ secrets.GH_PAT }}
+            GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
