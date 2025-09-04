@@ -1,198 +1,138 @@
-# -*- coding: utf-8 -*-
-# modules/skrypt2_wiatr.py - Wersja 7.0: Wydajna symulacja CFD z FFT solver
+# /modules/skrypt2_wiatr_jax.py
+# Wersja 8.0: Symulacja CFD na GPU z użyciem JAX-CFD i generowanie mapy przepływu
+import os
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
-from numba import njit, prange
-from scipy.fft import dst, idst
-from scipy.ndimage import binary_dilation
-import os
+import jax
+import jax.numpy as jnp
+import jax_cfd.base as cfd
+from jax_cfd.ml import towers
+from matplotlib import colors
+from PIL import Image
 
 def align_raster(source_path, profile, resampling_method):
+    """Dopasowuje raster do docelowego profilu."""
     with rasterio.open(source_path) as src:
-        array = src.read(1, out_shape=(profile['height'], profile['width']), 
-                        resampling=getattr(Resampling, resampling_method))
+        array = src.read(
+            1,
+            out_shape=(profile['height'], profile['width']),
+            resampling=getattr(Resampling, resampling_method)
+        )
     return array
 
-def poisson_solver_fft(b, dx, dy):
-    """FFT-based Poisson solver - szybki i stabilny"""
-    m, n = b.shape
-    b_int = b[1:-1, 1:-1] * dx * dy
-    
-    # DST dla warunków brzegowych Dirichleta
-    B = dst(dst(b_int, type=1, axis=0), type=1, axis=1)
-    
-    i = np.arange(1, m-1)[:, None]
-    j = np.arange(1, n-1)[None, :]
-    
-    # Eigenvalues dla operatora Laplace'a
-    denom = ((2*np.cos(np.pi*i/(m-1)) - 2)/dx**2 + 
-             (2*np.cos(np.pi*j/(n-1)) - 2)/dy**2)
-    
-    # Rozwiąż w przestrzeni fourierowskiej
-    P_hat = np.divide(B, denom, out=np.zeros_like(B), where=(denom!=0))
-    
-    # Inverse DST
-    p_int = idst(idst(P_hat, type=1, axis=0), type=1, axis=1)
-    p_int /= (2*(m-1)*(n-1))
-    
-    # Odtwórz pełne pole
-    p = np.zeros_like(b)
-    p[1:-1, 1:-1] = p_int
-    
-    # Warunki brzegowe Neumanna
-    p[:, 0] = p[:, 1]; p[:, -1] = p[:, -2]
-    p[0, :] = p[1, :]; p[-1, :] = p[-2, :]
-    
-    return p
+def generate_flow_map(u, v, output_path, building_mask):
+    """
+    Generuje obraz PNG (flow map) z pola wektorowego (u, v).
+    Kąt -> Hue, Prędkość -> Value.
+    """
+    print("-> Generowanie mapy przepływu (flow_map.png)...")
+    magnitude = np.sqrt(u**2 + v**2)
+    angle = np.arctan2(v, u)
 
-@njit(parallel=True)
-def compute_rhs(u, v, b, dx, dy, dt, rho):
-    """Oblicz prawą stronę równania Poissona"""
-    ny, nx = u.shape
-    idx = 1.0/dx; idy = 1.0/dy
+    # Normalizacja
+    # Kąt na zakres 0-1 dla Hue
+    h = (angle + np.pi) / (2 * np.pi)
+    # Nasycenie stałe
+    s = np.ones_like(h) * 0.9
+    # Prędkość na zakres 0-1 dla Value, z ograniczeniem do 99 percentyla
+    v_max = np.percentile(magnitude, 99.5)
+    v = np.clip(magnitude / v_max, 0, 1) if v_max > 0 else np.zeros_like(magnitude)
     
-    for i in prange(1, ny-1):
-        for j in prange(1, nx-1):
-            # Dywergencja prędkości
-            dudx = (u[i, j+1] - u[i, j-1]) * 0.5 * idx
-            dvdy = (v[i+1, j] - v[i-1, j]) * 0.5 * idy
-            
-            # Nieliniowe człony adwekcyjne
-            adv = dudx**2 + 2*dudx*dvdy + dvdy**2
-            
-            b[i, j] = rho*(dudx + dvdy)/dt - rho*adv
+    # Stworzenie obrazu HSV
+    hsv = np.stack([h, s, v], axis=-1)
+    
+    # Konwersja do RGB
+    rgb = colors.hsv_to_rgb(hsv)
+    
+    # Dodanie kanału Alpha (przezroczystość na budynkach)
+    alpha = np.where(building_mask, 0, 255).astype(np.uint8)
+    rgba = np.dstack(( (rgb*255).astype(np.uint8), alpha ))
 
-@njit(parallel=True)
-def velocity_update(u, v, p, mask, dx, dy, dt, rho, nu, 
-                   u_in, wind_direction, z0, h_ref):
-    """Aktualizacja pola prędkości metodą Navier-Stokes"""
-    ny, nx = u.shape
-    idx = 1.0/dx; idy = 1.0/dy
-    idx2 = 1.0/(dx*dx); idy2 = 1.0/(dy*dy)
-    
-    # Konwersja kierunku wiatru na komponenty
-    ang = np.deg2rad(wind_direction)
-    u_comp = u_in * np.sin(ang)
-    v_comp = u_in * np.cos(ang)
-    
-    un = u.copy(); vn = v.copy()
-    
-    # Aktualizacja wnętrza domeny
-    for i in prange(1, ny-1):
-        for j in prange(1, nx-1):
-            if mask[i, j]:
-                u[i, j] = 0.0  # No-slip na budynkach
-                v[i, j] = 0.0
-                continue
-                
-            # Schemat upwind dla adwekcji
-            u_x = (un[i,j] - un[i,j-1])*idx if un[i,j] > 0 else (un[i,j+1] - un[i,j])*idx
-            u_y = (un[i,j] - un[i-1,j])*idy if vn[i,j] > 0 else (un[i+1,j] - un[i,j])*idy
-            v_x = (vn[i,j] - vn[i,j-1])*idx if un[i,j] > 0 else (vn[i,j+1] - vn[i,j])*idx
-            v_y = (vn[i,j] - vn[i-1,j])*idy if vn[i,j] > 0 else (vn[i+1,j] - vn[i,j])*idy
-            
-            # Dyfuzja (Laplacjan)
-            lap_u = (un[i,j+1] - 2*un[i,j] + un[i,j-1])*idx2 + \
-                    (un[i+1,j] - 2*un[i,j] + un[i-1,j])*idy2
-            lap_v = (vn[i,j+1] - 2*vn[i,j] + vn[i,j-1])*idx2 + \
-                    (vn[i+1,j] - 2*vn[i,j] + vn[i-1,j])*idy2
-            
-            # Gradient ciśnienia
-            grad_px = (p[i,j+1] - p[i,j-1]) * 0.5 * idx
-            grad_py = (p[i+1,j] - p[i-1,j]) * 0.5 * idy
-            
-            # Navier-Stokes update
-            u[i,j] = un[i,j] - dt*(un[i,j]*u_x + vn[i,j]*u_y) - dt*grad_px/rho + nu*dt*lap_u
-            v[i,j] = vn[i,j] - dt*(un[i,j]*v_x + vn[i,j]*v_y) - dt*grad_py/rho + nu*dt*lap_v
-    
-    # Warunki brzegowe - profil logarytmiczny
-    log_factor = np.log(h_ref/z0)
-    
-    # Wlot z odpowiedniej strony na podstawie kierunku wiatru
-    for i in range(ny):
-        for j in range(nx):
-            # Wysokość nad gruntem
-            height = max(z0, (i+1)*dx)
-            velocity_factor = np.log(height/z0) / log_factor
-            
-            # Brzegi domeny
-            if i == 0 or i == ny-1 or j == 0 or j == nx-1:
-                u[i,j] = u_comp * velocity_factor
-                v[i,j] = v_comp * velocity_factor
-    
-    return u, v
+    # Zapis do pliku PNG
+    img = Image.fromarray(rgba, 'RGBA')
+    img.save(output_path, 'PNG')
+    print(f"  -> Mapa przepływu zapisana w: {output_path}")
+
 
 def main(config):
-    print("\n--- Uruchamianie Zaawansowanej Symulacji CFD ---")
+    """Główna funkcja do symulacji wiatru z użyciem JAX-CFD na GPU."""
+    print("\n--- Uruchamianie Symulacji Wiatru JAX-CFD (GPU) ---")
     paths = config['paths']
     params = config['params']['wind']
-    
-    # Setup siatki obliczeniowej
+
+    # 1. Konfiguracja siatki obliczeniowej
     with rasterio.open(paths['nmt']) as src:
         profile = src.profile.copy()
         target_res = params['target_res']
         scale = src.res[0] / target_res
         w, h = int(src.width * scale), int(src.height * scale)
-        transform = src.transform * src.transform.scale(1/scale, 1/scale)
+        transform = src.transform * src.transform.scale(1 / scale, 1 / scale)
         profile.update({'height': h, 'width': w, 'transform': transform, 'dtype': 'float32'})
 
-    print("-> Przygotowanie danych...")
-    nmt = align_raster(paths['nmt'], profile, 'bilinear')
-    nmpt = align_raster(paths['nmpt'], profile, 'bilinear')
-    landcover = align_raster(paths['landcover'], profile, 'nearest')
+    grid = cfd.grids.Grid(shape=(h, w), domain=((0, h * target_res), (0, w * target_res)))
+
+    # 2. Przygotowanie danych wejściowych
+    print("-> Przygotowywanie danych wejściowych...")
+    building_heights = align_raster(paths['output_buildings_raster'], profile, 'bilinear')
+    # Maska przeszkód - tam gdzie wysokość budynku jest większa od wysokości analizy
+    obstacle_mask = building_heights > params.get('analysis_height', 1.5)
     
-    # Maska budynków (z dylacją dla lepszej stabilności)
-    building_mask = (nmpt - nmt) > params.get('building_threshold', 2.5)
-    building_mask = binary_dilation(building_mask, structure=np.ones((3,3)))
+    # 3. Konfiguracja warunków brzegowych i fizyki
+    wind_speed = params.get('wind_speed', 5.0)
+    wind_direction_deg = params.get('wind_direction', 270)
+    wind_direction_rad = jnp.deg2rad(wind_direction_deg)
+
+    # Ustawienie prędkości wlotowej
+    velocity_x = wind_speed * jnp.cos(wind_direction_rad)
+    velocity_y = wind_speed * jnp.sin(wind_direction_rad)
+    inflow_velocity = (velocity_y, velocity_x) # (v, u) dla JAX-CFD (oś Y, oś X)
+
+    # Warunki brzegowe Dirichleta na wlocie, zerowy gradient na wylocie
+    bc = cfd.boundaries.dirichlet_boundary_conditions(grid, v=inflow_velocity)
+    # Warunek braku poślizgu na przeszkodach
+    obstacle_bc = cfd.boundaries.no_slip_boundary_conditions(grid)
+    obstacle = cfd.geometry.obstacle(cfd.geometry.BooleanMask(obstacle_mask, grid=grid))
     
-    # Parametry fizyczne
-    rho = 1.225      # gęstość powietrza [kg/m³]
-    nu = 1.5e-5      # lepkość kinematyczna [m²/s]
-    dt = 0.001       # krok czasowy [s]
-    wind_speed = params['wind_speed']
-    wind_direction = params['wind_direction']
-    z0 = 0.1         # chropowatość powierzchni
-    h_ref = 10.0     # wysokość referencyjna
+    # 4. Konfiguracja i uruchomienie symulacji
+    # Zmniejszamy lepkość dla bardziej turbulentnego przepływu
+    nu = params.get('kinematic_viscosity', 1.5e-2)
+    dt = cfd.step_fns.stable_time_step(wind_speed, 0.5, nu, grid)
     
-    # Inicjalizacja pól prędkości
-    u = np.zeros((h, w), dtype=np.float32)
-    v = np.zeros((h, w), dtype=np.float32)
-    p = np.zeros((h, w), dtype=np.float32)
-    b = np.zeros((h, w), dtype=np.float32)
+    # Równania Naviera-Stokesa z uwzględnieniem przeszkód
+    step_fn = cfd.step_fns.semi_implicit_navier_stokes(
+        density=1.225, viscosity=nu, dt=dt, grid=grid,
+        convection_fn=cfd.advection.upwind,
+        pressure_fn=cfd.pressure.fast_diagonalization,
+        forcing=obstacle.forcing(obstacle_bc)
+    )
+
+    # Inicjalizacja pola prędkości
+    v0 = tuple(jnp.full(grid.shape, c, grid.dtype) for c in inflow_velocity)
     
-    print(f"-> Symulacja CFD: {wind_speed:.1f} m/s, {wind_direction:.0f}°")
+    # Kompilacja JIT i uruchomienie symulacji
+    trajectory_fn = jax.jit(towers.trajectory(step_fn, num_steps=1500))
     
-    # Iteracje CFD (mniej iteracji dla szybkości)
-    n_iterations = 100
+    print(f"-> Symulacja CFD: {wind_speed:.1f} m/s, {wind_direction_deg:.0f}°, kroki: 1500...")
+    # Uruchomienie na urządzeniu (GPU, jeśli dostępne)
+    _, trajectory = trajectory_fn(v0)
     
-    for iteration in range(n_iterations):
-        # 1. Oblicz RHS równania Poissona
-        compute_rhs(u, v, b, target_res, target_res, dt, rho)
-        
-        # 2. Rozwiąż równanie Poissona dla ciśnienia (FFT)
-        p = poisson_solver_fft(b, target_res, target_res)
-        
-        # 3. Aktualizuj pole prędkości
-        u, v = velocity_update(u, v, p, building_mask, target_res, target_res, 
-                              dt, rho, nu, wind_speed, wind_direction, z0, h_ref)
-        
-        # Wyświetl postęp co 20 iteracji
-        if (iteration + 1) % 20 == 0:
-            max_u = np.max(np.abs(u))
-            max_v = np.max(np.abs(v))
-            print(f"  -> Iteracja {iteration+1}/{n_iterations}, Max U: {max_u:.2f}, Max V: {max_v:.2f}")
+    vy, vx = trajectory # v, u
     
-    # Oblicz wynikowe pola
-    wind_speed_field = np.sqrt(u**2 + v**2)
-    wind_direction_field = np.rad2deg(np.arctan2(u, v)) % 360
+    # Konwersja wyników z JAX do NumPy
+    final_u = np.array(vx)
+    final_v = np.array(vy)
     
-    # Zapisz wyniki
+    # 5. Obliczenie i zapisanie wyników
+    print("-> Zapisywanie wyników...")
+    wind_speed_field = np.sqrt(final_u**2 + final_v**2)
+    
+    # Zapis rastra prędkości
     with rasterio.open(paths['output_wind_speed_raster'], 'w', **profile) as dst:
         dst.write(wind_speed_field.astype(np.float32), 1)
-        
-    with rasterio.open(paths['output_wind_dir_raster'], 'w', **profile) as dst:
-        dst.write(wind_direction_field.astype(np.float32), 1)
-    
-    print(f"--- CFD zakończona! Max prędkość: {np.max(wind_speed_field):.1f} m/s ---")
+
+    # Generowanie mapy przepływu do animacji
+    generate_flow_map(final_u, final_v, paths['output_flow_map'], obstacle_mask)
+
+    print(f"--- Symulacja CFD (JAX) zakończona! Max prędkość: {np.max(wind_speed_field):.1f} m/s ---")
     return paths['output_wind_speed_raster']
