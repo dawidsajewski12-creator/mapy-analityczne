@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="pl">
 <head>
-    <title>Mapy Analityczne - Enhanced</title>
+    <title>Mapy Analityczne - Enhanced CFD</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
@@ -87,6 +87,16 @@
             color: white;
         }
 
+        /* Pulsing animation for CFD layer button */
+        .layer-btn[data-layer="wind"].active {
+            animation: cfdPulse 2s ease-in-out infinite;
+        }
+
+        @keyframes cfdPulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); }
+            50% { box-shadow: 0 0 20px 5px rgba(59, 130, 246, 0.3); }
+        }
+
         .stats-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -156,6 +166,25 @@
             font-size: 0.7rem;
             color: #94a3b8;
             font-weight: 500;
+        }
+
+        /* CFD Visualization popup */
+        .cfd-visualization-popup .leaflet-popup-content-wrapper {
+            background: rgba(15, 23, 42, 0.95);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            color: #e2e8f0;
+        }
+
+        .cfd-visualization-popup .leaflet-popup-content {
+            margin: 0;
+            padding: 1rem;
+        }
+
+        .cfd-visualization-popup .leaflet-popup-tip {
+            background: rgba(15, 23, 42, 0.95);
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
 
         /* Animacje CFD */
@@ -237,10 +266,11 @@
             <h3>🗺️ Warstwy</h3>
             <div class="layer-controls">
                 <button class="layer-btn" data-layer="landcover">🏗️ Pokrycie terenu</button>
+                <button class="layer-btn" data-layer="buildings">🏢 Model budynków</button>
                 <button class="layer-btn" data-layer="canopy">🌳 Korony drzew</button>
                 <button class="layer-btn" data-layer="nmt">⛰️ Model terenu</button>
                 <button class="layer-btn" data-layer="flood">🌊 Podtopienia</button>
-                <button class="layer-btn" data-layer="wind">💨 Wiatr + CFD</button>
+                <button class="layer-btn" data-layer="wind">💨 Wiatr CFD</button>
                 <button class="layer-btn" data-layer="comfort">🌡️ Komfort termiczny</button>
             </div>
         </div>
@@ -343,6 +373,13 @@ class GISApp {
                 opacity: 0.8,
                 legend: this.createCategoryLegend
             },
+            buildings: {
+                name: '🏢 Model budynków',
+                url: './wyniki/kafelki/budynki/{z}/{x}/{y}.png',
+                opacity: 0.85,
+                legend: this.createGradientLegend,
+                legendParams: { title: 'Wysokość budynków [m]', min: 3, max: 50, gradient: 'linear-gradient(to right, #440154, #414487, #2a788e, #22a884, #7ad151, #fde725)' }
+            },
             canopy: {
                 name: '🌳 Korony drzew',
                 url: './wyniki/kafelki/korony_drzew/{z}/{x}/{y}.png',
@@ -366,12 +403,13 @@ class GISApp {
                 hasAnimation: true
             },
             wind: {
-                name: '💨 Wiatr + CFD',
+                name: '💨 Wiatr CFD',
                 url: './wyniki/kafelki/wiatr/{z}/{x}/{y}.png',
                 opacity: 0.6,
                 legend: this.createGradientLegend,
                 legendParams: { title: 'Prędkość wiatru [m/s]', min: 0, max: 15, gradient: 'linear-gradient(to right, #fde725, #7ad151, #22a884, #2a788e, #414487, #440154)' },
-                hasAnimation: true
+                hasAnimation: true,
+                hasVisualization: true
             },
             comfort: {
                 name: '🌡️ Komfort termiczny',
@@ -382,7 +420,7 @@ class GISApp {
             }
         };
 
-        // Utworz warstwy Leaflet z poprawionymi ustawieniami
+        // Utwórz warstwy Leaflet z poprawionymi ustawieniami
         Object.keys(this.layers).forEach(key => {
             const layer = this.layers[key];
             layer.leafletLayer = L.tileLayer(layer.url, {
@@ -436,6 +474,63 @@ class GISApp {
         if (layer.hasAnimation) {
             this.startAnimations(layerKey);
         }
+        
+        // Pokaż wizualizację CFD jeśli dostępna
+        if (layer.hasVisualization && layerKey === 'wind') {
+            this.showCFDVisualization();
+        }
+    }
+
+    showCFDVisualization() {
+        // Sprawdź czy istnieje wizualizacja CFD
+        const vizUrl = './wyniki/rastry/predkosc_wiatru_cfd_visualization.png';
+        
+        fetch(vizUrl)
+        .then(response => {
+            if (response.ok) {
+                // Utwórz popup z wizualizacją CFD
+                const popup = L.popup({
+                    maxWidth: 800,
+                    maxHeight: 600,
+                    className: 'cfd-visualization-popup'
+                })
+                .setLatLng(this.map.getCenter())
+                .setContent(`
+                    <div style="text-align: center;">
+                        <h3 style="margin-bottom: 10px; color: #2563eb;">📊 Zaawansowana Analiza CFD</h3>
+                        <img src="${vizUrl}" style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);" alt="Wizualizacja CFD">
+                        <p style="margin-top: 10px; font-size: 0.8rem; color: #64748b;">
+                            Szczegółowa analiza przepływu powietrza z wirami, liniami prądu i dyfuzją
+                        </p>
+                        <div style="margin-top: 10px;">
+                            <button onclick="window.open('${vizUrl}', '_blank')" style="background: #3b82f6; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">
+                                🔍 Powiększ
+                            </button>
+                        </div>
+                    </div>
+                `)
+                .openOn(this.map);
+                
+                // Dodaj informację w legendzie
+                const legendContent = document.getElementById('legend-content');
+                if (legendContent) {
+                    legendContent.innerHTML += `
+                        <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(59, 130, 246, 0.1); border-radius: 8px; border: 1px solid rgba(59, 130, 246, 0.2);">
+                            <div style="font-size: 0.8rem; font-weight: 600; color: #3b82f6; margin-bottom: 0.5rem;">🔬 Analiza CFD</div>
+                            <div style="font-size: 0.7rem; color: #64748b;">
+                                • Lattice Boltzmann D2Q9<br>
+                                • Linie prądu i wirowanie<br>
+                                • Dyfuzja znacznika<br>
+                                • Szczegółowa wizualizacja dostępna
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+        })
+        .catch(() => {
+            console.log('Wizualizacja CFD nie jest jeszcze dostępna');
+        });
     }
 
     createGradientLegend(params) {
@@ -491,7 +586,16 @@ class GISApp {
                 content += `
                     <div class="weather-info" style="margin-top: 1rem; font-size: 0.7rem;">
                         🌪️ Bazowy: ${this.weatherData.wind_speed.toFixed(1)} m/s<br>
-                        🧭 Kierunek: ${this.weatherData.wind_direction.toFixed(0)}°
+                        🧭 Kierunek: ${this.weatherData.wind_direction.toFixed(0)}°<br>
+                        🔬 Metoda: Lattice Boltzmann CFD
+                    </div>
+                `;
+            } else if (this.activeLayer === 'buildings') {
+                content += `
+                    <div class="weather-info" style="margin-top: 1rem; font-size: 0.7rem;">
+                        🏗️ Model: BDOT BUBD + NMPT<br>
+                        📏 Rozdzielczość: 2m<br>
+                        🔧 Metoda: Percentyl 95%
                     </div>
                 `;
             } else if (this.activeLayer === 'comfort') {
@@ -528,6 +632,7 @@ class GISApp {
         // Symulowane statystyki - w rzeczywistej aplikacji można by pobierać z rastrów
         const stats = {
             landcover: { min: '1', max: '7', avg: '3.2', area: '85%' },
+            buildings: { min: '3.0m', max: '48.5m', avg: '12.8m', area: '18%' },
             canopy: { min: '4.0m', max: '42.3m', avg: '18.7m', area: '34%' },
             nmt: { min: '12m', max: '89m', avg: '45m', area: '100%' },
             flood: { min: '0.01m', max: '1.8m', avg: '0.3m', area: '12%' },
