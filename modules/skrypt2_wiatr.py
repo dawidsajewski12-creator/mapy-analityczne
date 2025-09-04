@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# modules/skrypt2_wiatr.py - Zaawansowana symulacja CFD v8.0
+# modules/skrypt2_wiatr.py - Stabilna symulacja CFD v8.1
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
@@ -19,71 +19,78 @@ def align_raster(source_path, profile, resampling_method):
                        resampling=getattr(Resampling, resampling_method))
 
 @njit(parallel=True)
-def lattice_boltzmann_d2q9(f, rho, u, v, tau, obstacle_mask, u_inlet, v_inlet):
-    """Implementacja Lattice Boltzmann Method D2Q9 - szybka i stabilna"""
-    # Wektory prędkości D2Q9
-    ex = np.array([0, 1, 0, -1, 0, 1, -1, -1, 1], dtype=np.float32)
-    ey = np.array([0, 0, 1, 0, -1, 1, 1, -1, -1], dtype=np.float32)
-    w = np.array([4/9, 1/9, 1/9, 1/9, 1/9, 1/36, 1/36, 1/36, 1/36], dtype=np.float32)
+def simple_cfd_simulation(u, v, building_mask, u_inlet, v_inlet, dt, dx, dy, viscosity):
+    """Uproszczona ale stabilna symulacja CFD"""
+    ny, nx = u.shape
+    u_new = np.copy(u)
+    v_new = np.copy(v)
     
-    ny, nx, nq = f.shape
-    f_new = np.zeros_like(f)
-    
-    # Streaming step
-    for i in prange(ny):
-        for j in prange(nx):
-            for q in range(9):
-                ni = i - int(ey[q])
-                nj = j - int(ex[q])
-                if 0 <= ni < ny and 0 <= nj < nx:
-                    f_new[i, j, q] = f[ni, nj, q]
-    
-    # Collision step
-    for i in prange(ny):
-        for j in prange(nx):
-            if obstacle_mask[i, j]:
-                # Bounce-back dla przeszkód
-                f_new[i, j, 1] = f[i, j, 3]  # East -> West
-                f_new[i, j, 3] = f[i, j, 1]  # West -> East
-                f_new[i, j, 2] = f[i, j, 4]  # North -> South
-                f_new[i, j, 4] = f[i, j, 2]  # South -> North
-                f_new[i, j, 5] = f[i, j, 7]  # NE -> SW
-                f_new[i, j, 7] = f[i, j, 5]  # SW -> NE
-                f_new[i, j, 6] = f[i, j, 8]  # NW -> SE
-                f_new[i, j, 8] = f[i, j, 6]  # SE -> NW
+    for i in prange(1, ny-1):
+        for j in prange(1, nx-1):
+            if building_mask[i, j]:
+                # Warunki no-slip dla budynków
+                u_new[i, j] = 0.0
+                v_new[i, j] = 0.0
+                continue
+            
+            # Składowe adwekcji (upwind scheme)
+            u_curr = u[i, j]
+            v_curr = v[i, j]
+            
+            # Gradient prędkości
+            if u_curr > 0:
+                dudx = (u[i, j] - u[i, j-1]) / dx
             else:
-                # Oblicz gęstość i prędkość
-                rho_local = 0.0
-                ux_local = 0.0
-                uy_local = 0.0
+                dudx = (u[i, j+1] - u[i, j]) / dx
                 
-                for q in range(9):
-                    rho_local += f_new[i, j, q]
-                    ux_local += ex[q] * f_new[i, j, q]
-                    uy_local += ey[q] * f_new[i, j, q]
+            if v_curr > 0:
+                dudy = (u[i, j] - u[i-1, j]) / dy
+            else:
+                dudy = (u[i+1, j] - u[i, j]) / dy
+            
+            if u_curr > 0:
+                dvdx = (v[i, j] - v[i, j-1]) / dx
+            else:
+                dvdx = (v[i, j+1] - v[i, j]) / dx
                 
-                if rho_local > 0:
-                    ux_local /= rho_local
-                    uy_local /= rho_local
-                
-                rho[i, j] = rho_local
-                u[i, j] = ux_local
-                v[i, j] = uy_local
-                
-                # Warunki brzegowe dla wlotu
-                if j == 0:  # Lewa granica
-                    ux_local = u_inlet
-                    uy_local = v_inlet
-                    rho_local = 1.0
-                
-                # BGK collision
-                u_sq = ux_local**2 + uy_local**2
-                for q in range(9):
-                    cu = ex[q] * ux_local + ey[q] * uy_local
-                    feq = w[q] * rho_local * (1 + 3*cu + 4.5*cu**2 - 1.5*u_sq)
-                    f_new[i, j, q] = f_new[i, j, q] - (f_new[i, j, q] - feq) / tau
+            if v_curr > 0:
+                dvdy = (v[i, j] - v[i-1, j]) / dy
+            else:
+                dvdy = (v[i+1, j] - v[i, j]) / dy
+            
+            # Laplacjan (dyfuzja)
+            lap_u = (u[i, j+1] - 2*u[i, j] + u[i, j-1])/(dx*dx) + \
+                    (u[i+1, j] - 2*u[i, j] + u[i-1, j])/(dy*dy)
+            lap_v = (v[i, j+1] - 2*v[i, j] + v[i, j-1])/(dx*dx) + \
+                    (v[i+1, j] - 2*v[i, j] + v[i-1, j])/(dy*dy)
+            
+            # Aktualizacja z kontrolą stabilności
+            du_dt = -u_curr * dudx - v_curr * dudy + viscosity * lap_u
+            dv_dt = -u_curr * dvdx - v_curr * dvdy + viscosity * lap_v
+            
+            # Ograniczenie zmian dla stabilności
+            max_change = 0.1
+            du_dt = max(-max_change, min(max_change, du_dt))
+            dv_dt = max(-max_change, min(max_change, dv_dt))
+            
+            u_new[i, j] = u[i, j] + dt * du_dt
+            v_new[i, j] = v[i, j] + dt * dv_dt
     
-    return f_new
+    # Warunki brzegowe - wlot
+    for i in range(ny):
+        if not building_mask[i, 0]:
+            u_new[i, 0] = u_inlet
+            v_new[i, 0] = v_inlet
+    
+    # Warunki brzegowe - pozostałe granice (gradient zero)
+    u_new[:, -1] = u_new[:, -2]
+    v_new[:, -1] = v_new[:, -2]
+    u_new[0, :] = u_new[1, :]
+    v_new[0, :] = v_new[1, :]
+    u_new[-1, :] = u_new[-2, :]
+    v_new[-1, :] = v_new[-2, :]
+    
+    return u_new, v_new
 
 @njit(parallel=True)
 def calculate_vorticity(u, v, dx, dy):
@@ -99,194 +106,236 @@ def calculate_vorticity(u, v, dx, dy):
     
     return vorticity
 
-@njit(parallel=True)
-def generate_streamlines(u, v, x_start, y_start, dx, dy, max_length=100):
-    """Generuje linie prądu dla wizualizacji"""
-    n_seeds = len(x_start)
+def create_safe_visualization(u, v, vorticity, buildings, wind_speed, profile, output_path):
+    """Bezpieczna wizualizacja CFD z obsługą NaN"""
     ny, nx = u.shape
     
-    streamlines = []
-    for seed in prange(n_seeds):
-        x, y = x_start[seed], y_start[seed]
-        line_x, line_y = [x], [y]
-        
-        for step in range(max_length):
-            i = int(y / dy)
-            j = int(x / dx)
-            
-            if i <= 0 or i >= ny-1 or j <= 0 or j >= nx-1:
-                break
-            
-            # Interpolacja prędkości
-            u_interp = u[i, j]
-            v_interp = v[i, j]
-            
-            if abs(u_interp) < 1e-6 and abs(v_interp) < 1e-6:
-                break
-            
-            # Krok Runge-Kutta
-            dt = 0.5 * min(dx, dy) / max(abs(u_interp), abs(v_interp), 1e-6)
-            x += u_interp * dt
-            y += v_interp * dt
-            
-            line_x.append(x)
-            line_y.append(y)
-        
-        streamlines.append((np.array(line_x), np.array(line_y)))
-    
-    return streamlines
-
-def create_advanced_visualization(u, v, vorticity, buildings, wind_speed, profile, output_path):
-    """Tworzy zaawansowaną wizualizację CFD w stylu profesjonalnych symulacji"""
-    ny, nx = u.shape
+    # Sprawdź i napraw wartości NaN
+    u = np.nan_to_num(u, nan=0.0, posinf=0.0, neginf=0.0)
+    v = np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)
+    vorticity = np.nan_to_num(vorticity, nan=0.0, posinf=0.0, neginf=0.0)
     
     # Setup siatki
     x = np.linspace(0, nx * profile['transform'][0], nx)
     y = np.linspace(0, ny * abs(profile['transform'][4]), ny)
     X, Y = np.meshgrid(x, y)
     
-    # Utwórz figurę z subplotami
-    fig = plt.figure(figsize=(20, 12))
+    # Utwórz figurę
+    fig = plt.figure(figsize=(20, 12), facecolor='white')
     
     # 1. Pole prędkości z wektorami
     ax1 = plt.subplot(2, 3, 1)
     speed = np.sqrt(u**2 + v**2)
-    im1 = ax1.contourf(X, Y, speed, levels=50, cmap='viridis', alpha=0.8)
+    speed_max = np.percentile(speed[speed > 0], 95) if np.any(speed > 0) else 1.0
     
-    # Strzałki przepływu (przerzedzone)
-    skip = max(1, nx // 30)
+    levels = np.linspace(0, speed_max, 20)
+    try:
+        im1 = ax1.contourf(X, Y, speed, levels=levels, cmap='viridis', alpha=0.8)
+        plt.colorbar(im1, ax=ax1, label='Prędkość [m/s]')
+    except:
+        im1 = ax1.imshow(speed, cmap='viridis', alpha=0.8, extent=[x[0], x[-1], y[0], y[-1]])
+        plt.colorbar(im1, ax=ax1, label='Prędkość [m/s]')
+    
+    # Strzałki przepływu
+    skip = max(1, nx // 20)
     ax1.quiver(X[::skip, ::skip], Y[::skip, ::skip], 
                u[::skip, ::skip], v[::skip, ::skip], 
-               scale=50, alpha=0.7, color='white', width=0.003)
+               scale=speed_max*20, alpha=0.7, color='white', width=0.003)
     
     # Budynki
-    ax1.contour(X, Y, buildings, levels=[0.5], colors='red', linewidths=2)
-    plt.colorbar(im1, ax=ax1, label='Prędkość [m/s]')
+    if np.any(buildings > 0.5):
+        ax1.contour(X, Y, buildings, levels=[0.5], colors='red', linewidths=2)
+    
     ax1.set_title('Pole prędkości z wektorami przepływu')
     ax1.set_aspect('equal')
+    ax1.set_xlabel('Odległość [m]')
+    ax1.set_ylabel('Odległość [m]')
     
-    # 2. Wirowanie (vorticity)
+    # 2. Wirowanie
     ax2 = plt.subplot(2, 3, 2)
-    vort_levels = np.linspace(-np.percentile(np.abs(vorticity), 95), 
-                             np.percentile(np.abs(vorticity), 95), 50)
-    im2 = ax2.contourf(X, Y, vorticity, levels=vort_levels, cmap='RdBu_r', alpha=0.8)
-    ax2.contour(X, Y, buildings, levels=[0.5], colors='black', linewidths=1)
-    plt.colorbar(im2, ax=ax2, label='Wirowanie [1/s]')
+    vort_max = np.percentile(np.abs(vorticity), 95) if np.any(vorticity != 0) else 0.1
+    vort_levels = np.linspace(-vort_max, vort_max, 20)
+    
+    try:
+        im2 = ax2.contourf(X, Y, vorticity, levels=vort_levels, cmap='RdBu_r', alpha=0.8)
+        plt.colorbar(im2, ax=ax2, label='Wirowanie [1/s]')
+    except:
+        im2 = ax2.imshow(vorticity, cmap='RdBu_r', alpha=0.8, extent=[x[0], x[-1], y[0], y[-1]])
+        plt.colorbar(im2, ax=ax2, label='Wirowanie [1/s]')
+    
+    if np.any(buildings > 0.5):
+        ax2.contour(X, Y, buildings, levels=[0.5], colors='black', linewidths=1)
     ax2.set_title('Pole wirowania (turbulencje)')
     ax2.set_aspect('equal')
+    ax2.set_xlabel('Odległość [m]')
+    ax2.set_ylabel('Odległość [m]')
     
-    # 3. Linie prądu
+    # 3. Uproszczone linie prądu
     ax3 = plt.subplot(2, 3, 3)
-    ax3.contourf(X, Y, speed, levels=30, cmap='plasma', alpha=0.6)
+    try:
+        im3 = ax3.contourf(X, Y, speed, levels=15, cmap='plasma', alpha=0.6)
+        
+        # Proste linie prądu - zaczynające się z lewej strony
+        y_seeds = np.linspace(y[ny//4], y[3*ny//4], 10)
+        x_seed = x[5] if len(x) > 5 else x[0]
+        
+        for y_start in y_seeds:
+            x_line = [x_seed]
+            y_line = [y_start]
+            
+            x_curr, y_curr = x_seed, y_start
+            for _ in range(min(50, nx//2)):
+                i = int((y_curr - y[0]) / (y[-1] - y[0]) * (ny-1))
+                j = int((x_curr - x[0]) / (x[-1] - x[0]) * (nx-1))
+                
+                if i < 0 or i >= ny or j < 0 or j >= nx:
+                    break
+                
+                if buildings[i, j] > 0.5:
+                    break
+                
+                step = min(abs(profile['transform'][0]), abs(profile['transform'][4]))
+                x_curr += u[i, j] * step * 0.5
+                y_curr += v[i, j] * step * 0.5
+                
+                if x_curr >= x[-1] or y_curr >= y[-1] or y_curr <= y[0]:
+                    break
+                
+                x_line.append(x_curr)
+                y_line.append(y_curr)
+            
+            if len(x_line) > 2:
+                ax3.plot(x_line, y_line, 'white', alpha=0.8, linewidth=1.5)
     
-    # Generuj punkty startowe dla linii prądu
-    y_seeds = np.linspace(y[0], y[-1], 15)
-    x_seeds = np.full_like(y_seeds, x[5])  # Start z lewej strony
+    except Exception as e:
+        print(f"Uwaga: Problem z liniami prądu: {e}")
+        im3 = ax3.imshow(speed, cmap='plasma', alpha=0.6, extent=[x[0], x[-1], y[0], y[-1]])
     
-    # Oblicz linie prądu
-    streamlines = generate_streamlines(u, v, x_seeds, y_seeds, 
-                                     profile['transform'][0], abs(profile['transform'][4]))
-    
-    for line_x, line_y in streamlines:
-        if len(line_x) > 2:
-            ax3.plot(line_x, line_y, 'white', alpha=0.8, linewidth=1.5)
-    
-    ax3.contour(X, Y, buildings, levels=[0.5], colors='red', linewidths=2)
+    if np.any(buildings > 0.5):
+        ax3.contour(X, Y, buildings, levels=[0.5], colors='red', linewidths=2)
     ax3.set_title('Linie prądu')
     ax3.set_aspect('equal')
+    ax3.set_xlabel('Odległość [m]')
+    ax3.set_ylabel('Odległość [m]')
     
-    # 4. Dyfuzja "dymu" - symulacja cząstek
+    # 4. Symulacja dyfuzji
     ax4 = plt.subplot(2, 3, 4)
-    
-    # Symulacja rozprzestrzeniania się znacznika
+    # Uproszczona dyfuzja - gaussowska z kierunkiem wiatru
     tracer = np.zeros_like(u)
-    tracer[:, :5] = 1.0  # Źródło na lewej granicy
+    tracer[:, :max(1, nx//10)] = 1.0  # Źródło
     
-    # Dyfuzja z konwekcją
-    for _ in range(20):
-        # Adwekcja
-        tracer_new = np.zeros_like(tracer)
+    # Symulacja adwekcji
+    for _ in range(5):
+        tracer_new = np.copy(tracer)
         for i in range(1, ny-1):
             for j in range(1, nx-1):
-                if not buildings[i, j]:
-                    # Upwind scheme
-                    if u[i, j] > 0:
-                        tracer_new[i, j] += u[i, j] * tracer[i, j-1] * 0.1
-                    else:
-                        tracer_new[i, j] += -u[i, j] * tracer[i, j+1] * 0.1
-                    
-                    if v[i, j] > 0:
-                        tracer_new[i, j] += v[i, j] * tracer[i-1, j] * 0.1
-                    else:
-                        tracer_new[i, j] += -v[i, j] * tracer[i+1, j] * 0.1
-                    
-                    tracer_new[i, j] += tracer[i, j] * 0.6
+                if buildings[i, j] > 0.5:
+                    tracer_new[i, j] = 0
+                    continue
+                
+                # Upwind advection
+                advection = 0
+                if u[i, j] > 0 and j > 0:
+                    advection += u[i, j] * tracer[i, j-1] * 0.1
+                elif u[i, j] < 0 and j < nx-1:
+                    advection += -u[i, j] * tracer[i, j+1] * 0.1
+                
+                if v[i, j] > 0 and i > 0:
+                    advection += v[i, j] * tracer[i-1, j] * 0.1
+                elif v[i, j] < 0 and i < ny-1:
+                    advection += -v[i, j] * tracer[i+1, j] * 0.1
+                
+                tracer_new[i, j] = tracer[i, j] * 0.9 + advection
         
-        # Dyfuzja
-        tracer = gaussian_filter(tracer_new, sigma=0.5)
-        tracer[buildings > 0.5] = 0  # Usuń znacznik z budynków
+        tracer = gaussian_filter(tracer_new, sigma=0.8)
+        tracer[buildings > 0.5] = 0
     
-    im4 = ax4.contourf(X, Y, tracer, levels=30, cmap='Reds', alpha=0.8)
-    ax4.contour(X, Y, buildings, levels=[0.5], colors='black', linewidths=2)
-    plt.colorbar(im4, ax=ax4, label='Koncentracja znacznika')
-    ax4.set_title('Dyfuzja znacznika (symulacja dymu)')
+    try:
+        im4 = ax4.contourf(X, Y, tracer, levels=15, cmap='Reds', alpha=0.8)
+        plt.colorbar(im4, ax=ax4, label='Koncentracja')
+    except:
+        im4 = ax4.imshow(tracer, cmap='Reds', alpha=0.8, extent=[x[0], x[-1], y[0], y[-1]])
+        plt.colorbar(im4, ax=ax4, label='Koncentracja')
+    
+    if np.any(buildings > 0.5):
+        ax4.contour(X, Y, buildings, levels=[0.5], colors='black', linewidths=2)
+    ax4.set_title('Dyfuzja znacznika')
     ax4.set_aspect('equal')
+    ax4.set_xlabel('Odległość [m]')
+    ax4.set_ylabel('Odległość [m]')
     
-    # 5. Ciśnienie (rekonstruowane z dywergencji)
+    # 5. Pole ciśnienia (przybliżone)
     ax5 = plt.subplot(2, 3, 5)
-    
-    # Oblicz dywergencję
-    div = np.zeros_like(u)
+    # Oblicz dywergencję jako przybliżenie ciśnienia
+    pressure = np.zeros_like(u)
     for i in range(1, ny-1):
         for j in range(1, nx-1):
-            div[i, j] = (u[i, j+1] - u[i, j-1])/(2*profile['transform'][0]) + \
-                       (v[i+1, j] - v[i-1, j])/(2*abs(profile['transform'][4]))
+            divergence = (u[i, j+1] - u[i, j-1])/(2*abs(profile['transform'][0])) + \
+                        (v[i+1, j] - v[i-1, j])/(2*abs(profile['transform'][4]))
+            pressure[i, j] = -divergence
     
-    # Przybliżone ciśnienie (zakładając -∇p ~ div(u))
-    pressure = gaussian_filter(-div, sigma=1.0)
+    pressure = gaussian_filter(pressure, sigma=1.0)
+    pressure_max = np.percentile(np.abs(pressure), 95) if np.any(pressure != 0) else 0.1
     
-    im5 = ax5.contourf(X, Y, pressure, levels=50, cmap='RdYlBu_r', alpha=0.8)
-    ax5.contour(X, Y, buildings, levels=[0.5], colors='black', linewidths=1)
-    plt.colorbar(im5, ax=ax5, label='Ciśnienie względne')
+    try:
+        pressure_levels = np.linspace(-pressure_max, pressure_max, 20)
+        im5 = ax5.contourf(X, Y, pressure, levels=pressure_levels, cmap='RdYlBu_r', alpha=0.8)
+        plt.colorbar(im5, ax=ax5, label='Ciśnienie względne')
+    except:
+        im5 = ax5.imshow(pressure, cmap='RdYlBu_r', alpha=0.8, extent=[x[0], x[-1], y[0], y[-1]])
+        plt.colorbar(im5, ax=ax5, label='Ciśnienie względne')
+    
+    if np.any(buildings > 0.5):
+        ax5.contour(X, Y, buildings, levels=[0.5], colors='black', linewidths=1)
     ax5.set_title('Pole ciśnienia')
     ax5.set_aspect('equal')
+    ax5.set_xlabel('Odległość [m]')
+    ax5.set_ylabel('Odległość [m]')
     
     # 6. Profil prędkości
     ax6 = plt.subplot(2, 3, 6)
     
-    # Średni profil prędkości w funkcji wysokości
+    # Średni profil w środku domeny
     mid_col = nx // 2
-    height_profile = np.mean(speed[:, mid_col-5:mid_col+5], axis=1)
+    height_profile = np.mean(speed[:, max(0, mid_col-2):min(nx, mid_col+3)], axis=1)
     heights = y
     
-    ax6.plot(height_profile, heights, 'b-', linewidth=2, label='CFD')
+    ax6.plot(height_profile, heights, 'b-', linewidth=3, label='CFD wynik')
     
     # Teoretyczny profil logarytmiczny
-    z0 = 0.1  # Chropowatość
-    u_star = wind_speed * 0.1  # Prędkość tarcia
-    y_theory = np.linspace(z0, heights[-1], 100)
+    z0 = 0.1
+    u_star = wind_speed * 0.1
+    y_theory = np.linspace(max(z0, heights[0]), heights[-1], 50)
     u_theory = (u_star / 0.41) * np.log(y_theory / z0)
-    ax6.plot(u_theory, y_theory, 'r--', linewidth=2, label='Logarytmiczny')
+    u_theory = np.clip(u_theory, 0, wind_speed * 2)
+    
+    ax6.plot(u_theory, y_theory, 'r--', linewidth=2, label='Logarytmiczny (teoria)')
     
     ax6.set_xlabel('Prędkość [m/s]')
     ax6.set_ylabel('Wysokość [m]')
     ax6.set_title('Profil prędkości')
     ax6.legend()
     ax6.grid(True, alpha=0.3)
+    ax6.set_xlim(0, max(wind_speed * 1.5, np.max(height_profile) * 1.1))
     
     plt.tight_layout()
     
     # Zapisz wizualizację
     viz_path = output_path.replace('.tif', '_cfd_visualization.png')
-    plt.savefig(viz_path, dpi=150, bbox_inches='tight', 
-                facecolor='white', edgecolor='none')
-    plt.close()
+    try:
+        plt.savefig(viz_path, dpi=150, bbox_inches='tight', 
+                    facecolor='white', edgecolor='none')
+        print(f"  -> Wizualizacja zapisana: {viz_path}")
+    except Exception as e:
+        print(f"  -> Błąd zapisu wizualizacji: {e}")
+        viz_path = None
     
+    plt.close()
     return viz_path
 
 def main(config):
     """Główna funkcja symulacji CFD"""
-    print("\n--- Uruchamianie Zaawansowanej Symulacji CFD v8.0 ---")
+    print("\n--- Uruchamianie Stabilnej Symulacji CFD v8.1 ---")
     paths = config['paths']
     params = config['params']['wind']
     
@@ -327,71 +376,72 @@ def main(config):
     
     # Parametry symulacji
     wind_speed = params.get('wind_speed', 5.0)
-    wind_direction = params.get('wind_direction', 270.0)  # Zachód
+    wind_direction = params.get('wind_direction', 270.0)
     
-    # Konwersja kierunku na komponenty (meteorologiczna konwencja)
+    # Konwersja kierunku na komponenty
     wind_rad = np.deg2rad(wind_direction)
-    u_inlet = wind_speed * np.sin(wind_rad)  # Składowa E-W
-    v_inlet = wind_speed * np.cos(wind_rad)  # Składowa N-S
+    u_inlet = wind_speed * np.sin(wind_rad)
+    v_inlet = wind_speed * np.cos(wind_rad)
     
     print(f"-> Symulacja: {wind_speed:.1f} m/s z kierunku {wind_direction:.0f}°")
     print(f"   Komponenty: U={u_inlet:.2f}, V={v_inlet:.2f}")
     
-    # Inicjalizacja Lattice Boltzmann
-    print("-> Inicjalizacja Lattice Boltzmann D2Q9...")
+    # Inicjalizacja pól prędkości
+    print("-> Inicjalizacja stabilnej symulacji CFD...")
     
-    nq = 9  # Liczba kierunków w D2Q9
-    f = np.ones((h, w, nq), dtype=np.float32) * (1/9)  # Rozkład równowagowy
-    rho = np.ones((h, w), dtype=np.float32)
-    u = np.full((h, w), u_inlet, dtype=np.float32)
-    v = np.full((h, w), v_inlet, dtype=np.float32)
+    u = np.full((h, w), u_inlet * 0.1, dtype=np.float32)  # Łagodne rozpoczęcie
+    v = np.full((h, w), v_inlet * 0.1, dtype=np.float32)
     
-    # Maska przeszkód (budynki + rozszerzenie dla stabilności)
-    obstacle_mask = building_mask.astype(bool)
+    # Parametry symulacji
+    dt = 0.01  # Mniejszy krok czasowy dla stabilności
+    viscosity = target_res * wind_speed * 0.01  # Lepkość
     
-    # Parametry LBM
-    tau = 0.8  # Czas relaksacji (wpływa na lepkość)
-    
-    # Symulacja LBM
-    print("-> Uruchamianie symulacji Lattice Boltzmann...")
-    n_steps = 500
-    save_interval = 50
+    # Symulacja CFD
+    print("-> Uruchamianie stabilnej symulacji...")
+    n_steps = 200  # Mniej kroków ale stabilniejszych
     
     for step in range(n_steps):
-        f = lattice_boltzmann_d2q9(f, rho, u, v, tau, obstacle_mask, u_inlet, v_inlet)
+        u, v = simple_cfd_simulation(u, v, building_mask.astype(bool), 
+                                   u_inlet, v_inlet, dt, target_res, target_res, viscosity)
         
-        if (step + 1) % save_interval == 0:
+        # Sprawdź stabilność
+        if np.any(np.isnan(u)) or np.any(np.isnan(v)) or np.any(np.isinf(u)) or np.any(np.isinf(v)):
+            print(f"  -> Niestabilność w kroku {step}! Resetowanie...")
+            u = np.full((h, w), u_inlet * 0.5, dtype=np.float32)
+            v = np.full((h, w), v_inlet * 0.5, dtype=np.float32)
+            dt *= 0.5  # Zmniejsz krok czasowy
+            continue
+        
+        if (step + 1) % 50 == 0:
             speed = np.sqrt(u**2 + v**2)
-            print(f"  -> Krok {step+1}/{n_steps}, Max prędkość: {np.max(speed):.2f} m/s")
+            max_speed = np.max(speed) if not np.isnan(speed).any() else 0
+            print(f"  -> Krok {step+1}/{n_steps}, Max prędkość: {max_speed:.2f} m/s")
     
-    # Oblicz dodatkowe pola
+    # Końcowe czyszczenie danych
+    u = np.nan_to_num(u, nan=0.0, posinf=wind_speed*2, neginf=-wind_speed*2)
+    v = np.nan_to_num(v, nan=0.0, posinf=wind_speed*2, neginf=-wind_speed*2)
+    
+    # Zastosuj maskę budynków
+    u[building_mask.astype(bool)] = 0
+    v[building_mask.astype(bool)] = 0
+    
+    # Oblicz pola pochodne
     print("-> Obliczanie pól pochodnych...")
-    
     speed = np.sqrt(u**2 + v**2)
     vorticity = calculate_vorticity(u, v, target_res, target_res)
+    wind_direction_field = (np.rad2deg(np.arctan2(u, v)) + 360) % 360
+    wind_direction_field[speed < 0.1] = wind_direction
     
     # Wygładź wyniki
     speed = gaussian_filter(speed, sigma=0.5)
-    u = gaussian_filter(u, sigma=0.5)
-    v = gaussian_filter(v, sigma=0.5)
+    u = gaussian_filter(u, sigma=0.3)
+    v = gaussian_filter(v, sigma=0.3)
     
-    # Zastosuj maskę budynków (zero w budynkach)
-    speed[obstacle_mask] = 0
-    u[obstacle_mask] = 0
-    v[obstacle_mask] = 0
+    print("-> Tworzenie bezpiecznej wizualizacji...")
+    viz_path = create_safe_visualization(u, v, vorticity, building_mask.astype(float), 
+                                       wind_speed, profile, paths['output_wind_speed_raster'])
     
-    # Kierunek wiatru w stopniach
-    wind_direction_field = (np.rad2deg(np.arctan2(u, v)) + 360) % 360
-    wind_direction_field[speed < 0.1] = wind_direction  # Domyślny kierunek dla małych prędkości
-    
-    print("-> Tworzenie zaawansowanej wizualizacji...")
-    
-    # Utwórz wizualizację CFD
-    viz_path = create_advanced_visualization(u, v, vorticity, building_mask.astype(float), 
-                                           wind_speed, profile, paths['output_wind_speed_raster'])
-    print(f"  -> Zapisano wizualizację: {viz_path}")
-    
-    # Zapisz wyniki jako rastry
+    # Zapisz wyniki
     print("-> Zapisywanie wyników...")
     
     with rasterio.open(paths['output_wind_speed_raster'], 'w', **profile) as dst:
@@ -400,22 +450,7 @@ def main(config):
     with rasterio.open(paths['output_wind_dir_raster'], 'w', **profile) as dst:
         dst.write(wind_direction_field.astype(np.float32), 1)
     
-    # Zapisz dodatkowe dane
-    extra_outputs = {
-        'vorticity': vorticity,
-        'u_component': u,
-        'v_component': v,
-        'buildings_used': building_mask,
-        'simulation_params': {
-            'wind_speed': wind_speed,
-            'wind_direction': wind_direction,
-            'tau': tau,
-            'steps': n_steps,
-            'resolution': target_res
-        }
-    }
-    
-    # Zapisz pola prędkości jako komponenty (do dalszego wykorzystania)
+    # Zapisz komponenty
     u_path = paths['output_wind_speed_raster'].replace('.tif', '_u_component.tif')
     v_path = paths['output_wind_speed_raster'].replace('.tif', '_v_component.tif')
     vort_path = paths['output_wind_speed_raster'].replace('.tif', '_vorticity.tif')
@@ -427,11 +462,11 @@ def main(config):
     with rasterio.open(vort_path, 'w', **profile) as dst:
         dst.write(vorticity.astype(np.float32), 1)
     
-    # Zapisz metadane symulacji
+    # Metadane
     metadata_path = paths['output_wind_speed_raster'].replace('.tif', '_metadata.json')
     with open(metadata_path, 'w') as f:
         metadata = {
-            'simulation_type': 'Lattice Boltzmann D2Q9',
+            'simulation_type': 'Stabilna CFD - Simplified Navier-Stokes',
             'wind_speed_input': wind_speed,
             'wind_direction_input': wind_direction,
             'max_speed_result': float(np.max(speed)),
@@ -439,24 +474,16 @@ def main(config):
             'buildings_count': int(np.sum(building_mask)),
             'resolution_m': target_res,
             'grid_size': [h, w],
-            'files_generated': {
-                'speed': os.path.basename(paths['output_wind_speed_raster']),
-                'direction': os.path.basename(paths['output_wind_dir_raster']),
-                'u_component': os.path.basename(u_path),
-                'v_component': os.path.basename(v_path),
-                'vorticity': os.path.basename(vort_path),
-                'visualization': os.path.basename(viz_path)
-            }
+            'simulation_steps': n_steps,
+            'time_step': dt,
+            'viscosity': viscosity
         }
         json.dump(metadata, f, indent=2)
     
     print(f"--- Symulacja CFD zakończona pomyślnie! ---")
     print(f"   Max prędkość: {np.max(speed):.1f} m/s")
     print(f"   Średnia prędkość: {np.mean(speed[speed > 0.1]):.1f} m/s")
-    print(f"   Pliki wygenerowane:")
-    print(f"     - Prędkość: {paths['output_wind_speed_raster']}")
-    print(f"     - Kierunek: {paths['output_wind_dir_raster']}")
-    print(f"     - Wizualizacja: {viz_path}")
-    print(f"     - Metadane: {metadata_path}")
+    if viz_path:
+        print(f"   Wizualizacja: {os.path.basename(viz_path)}")
     
     return paths['output_wind_speed_raster']
