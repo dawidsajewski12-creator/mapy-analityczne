@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="pl">
 <head>
-    <title>Mapy Analityczne - Enhanced</title>
+    <title>Mapy Analityczne - Enhanced CFD</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
@@ -158,28 +158,6 @@
             font-weight: 500;
         }
 
-        /* Animacje CFD */
-        .wind-particle {
-            position: absolute;
-            width: 2px;
-            height: 8px;
-            background: #60a5fa;
-            border-radius: 1px;
-            pointer-events: none;
-            opacity: 0.8;
-            box-shadow: 0 0 4px #3b82f6;
-        }
-
-        .rain-particle {
-            position: absolute;
-            width: 2px;
-            height: 12px;
-            background: linear-gradient(to bottom, transparent, #06b6d4);
-            border-radius: 1px;
-            pointer-events: none;
-            opacity: 0.7;
-        }
-
         /* Timeline dla opadów */
         .rainfall-timeline {
             margin-top: 1rem;
@@ -205,12 +183,35 @@
             width: 0%;
             background: rgba(255, 255, 255, 0.3);
             border-radius: 10px;
-            animation: rainProgress 4s linear infinite;
+            transition: width 0.1s linear;
         }
 
-        @keyframes rainProgress {
-            0% { width: 0%; }
-            100% { width: 100%; }
+        /* CFD Controls */
+        .cfd-controls {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .cfd-btn {
+            flex: 1;
+            padding: 0.4rem 0.8rem;
+            background: rgba(6, 182, 212, 0.2);
+            border: 1px solid rgba(6, 182, 212, 0.3);
+            border-radius: 6px;
+            color: #67e8f9;
+            font-size: 0.65rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .cfd-btn:hover {
+            background: rgba(6, 182, 212, 0.3);
+        }
+
+        .cfd-btn.active {
+            background: rgba(6, 182, 212, 0.4);
+            border-color: #67e8f9;
         }
 
         /* Responsive */
@@ -274,14 +275,298 @@
 </div>
 
 <script>
+class WindStreamlines {
+    constructor(map) {
+        this.map = map;
+        this.canvas = null;
+        this.ctx = null;
+        this.windData = null;
+        this.particles = [];
+        this.animationId = null;
+        this.showParticles = true;
+        this.showVectors = false;
+        this.isAnimating = false;
+        this.isLoading = false;
+    }
+    
+    async setupCanvas() {
+        if (this.canvas) return;
+        
+        this.canvas = document.createElement('canvas');
+        this.canvas.style.position = 'absolute';
+        this.canvas.style.top = '0';
+        this.canvas.style.left = '0';
+        this.canvas.style.pointerEvents = 'none';
+        this.canvas.style.zIndex = '1000';
+        this.canvas.style.opacity = '0.8';
+        
+        const mapContainer = this.map.getContainer();
+        mapContainer.appendChild(this.canvas);
+        this.ctx = this.canvas.getContext('2d');
+        
+        this.resizeCanvas();
+        this.map.on('resize', () => this.resizeCanvas());
+        this.map.on('zoom', () => this.resizeCanvas());
+        this.map.on('move', () => this.resizeCanvas());
+    }
+    
+    resizeCanvas() {
+        if (!this.canvas) return;
+        const size = this.map.getSize();
+        this.canvas.width = size.x;
+        this.canvas.height = size.y;
+        this.canvas.style.width = size.x + 'px';
+        this.canvas.style.height = size.y + 'px';
+    }
+    
+    async loadWindData() {
+        if (this.isLoading || this.windData) return;
+        this.isLoading = true;
+        
+        try {
+            const [speedTiff, dirTiff] = await Promise.all([
+                GeoTIFF.fromUrl('./wyniki/rastry/predkosc_wiatru.tif'),
+                GeoTIFF.fromUrl('./wyniki/rastry/kierunek_wiatru.tif')
+            ]);
+            
+            const speedImage = await speedTiff.getImage();
+            const dirImage = await dirTiff.getImage();
+            
+            const speedData = await speedImage.readRasters();
+            const dirData = await dirImage.readRasters();
+            
+            const bbox = speedImage.getBoundingBox();
+            const width = speedImage.getWidth();
+            const height = speedImage.getHeight();
+            
+            const uData = new Float32Array(width * height);
+            const vData = new Float32Array(width * height);
+            
+            for (let i = 0; i < speedData[0].length; i++) {
+                const speed = speedData[0][i];
+                const direction = dirData[0][i] * Math.PI / 180;
+                
+                uData[i] = speed * Math.sin(direction);
+                vData[i] = speed * Math.cos(direction);
+            }
+            
+            this.windData = {
+                u: uData,
+                v: vData,
+                width: width,
+                height: height,
+                bbox: bbox,
+                maxSpeed: Math.max(...speedData[0])
+            };
+            
+            this.initParticles();
+            console.log(`CFD data loaded: ${width}x${height}, max: ${this.windData.maxSpeed.toFixed(1)} m/s`);
+            
+        } catch (error) {
+            console.error('Error loading CFD data:', error);
+        } finally {
+            this.isLoading = false;
+        }
+    }
+    
+    initParticles() {
+        if (!this.windData) return;
+        
+        this.particles = [];
+        const numParticles = 200;
+        
+        for (let i = 0; i < numParticles; i++) {
+            this.particles.push({
+                x: Math.random() * this.canvas.width,
+                y: Math.random() * this.canvas.height,
+                age: Math.random() * 100,
+                maxAge: 60 + Math.random() * 40,
+                speed: 0,
+                trail: []
+            });
+        }
+    }
+    
+    getWindAtScreenPoint(screenX, screenY) {
+        if (!this.windData) return { u: 0, v: 0, speed: 0 };
+        
+        const latlng = this.map.containerPointToLatLng([screenX, screenY]);
+        const bbox = this.windData.bbox;
+        
+        const normalizedX = (latlng.lng - bbox[0]) / (bbox[2] - bbox[0]);
+        const normalizedY = (bbox[3] - latlng.lat) / (bbox[3] - bbox[1]);
+        
+        const rasterX = Math.floor(normalizedX * this.windData.width);
+        const rasterY = Math.floor(normalizedY * this.windData.height);
+        
+        if (rasterX < 0 || rasterX >= this.windData.width || 
+            rasterY < 0 || rasterY >= this.windData.height) {
+            return { u: 0, v: 0, speed: 0 };
+        }
+        
+        const index = rasterY * this.windData.width + rasterX;
+        const u = this.windData.u[index] || 0;
+        const v = this.windData.v[index] || 0;
+        
+        return {
+            u: u,
+            v: -v,
+            speed: Math.sqrt(u * u + v * v)
+        };
+    }
+    
+    updateParticles() {
+        if (!this.windData || !this.particles.length) return;
+        
+        const pixelsPerMeter = this.map.getZoom() * 1.5;
+        const dt = 0.03;
+        
+        this.particles.forEach(particle => {
+            const wind = this.getWindAtScreenPoint(particle.x, particle.y);
+            const velocityScale = pixelsPerMeter * dt;
+            
+            particle.x += wind.u * velocityScale;
+            particle.y += wind.v * velocityScale;
+            particle.speed = wind.speed;
+            
+            particle.trail.push({ x: particle.x, y: particle.y });
+            if (particle.trail.length > 12) {
+                particle.trail.shift();
+            }
+            
+            particle.age++;
+            
+            if (particle.age > particle.maxAge || 
+                particle.x < 0 || particle.x > this.canvas.width ||
+                particle.y < 0 || particle.y > this.canvas.height) {
+                
+                particle.x = Math.random() * this.canvas.width;
+                particle.y = Math.random() * this.canvas.height;
+                particle.age = 0;
+                particle.trail = [];
+            }
+        });
+    }
+    
+    drawParticles() {
+        if (!this.showParticles || !this.windData) return;
+        
+        this.particles.forEach(particle => {
+            const alpha = 1 - (particle.age / particle.maxAge);
+            const speedNormalized = Math.min(particle.speed / this.windData.maxSpeed, 1);
+            const hue = (1 - speedNormalized) * 240;
+            
+            if (particle.trail.length > 1) {
+                this.ctx.strokeStyle = `hsla(${hue}, 80%, 60%, ${alpha * 0.7})`;
+                this.ctx.lineWidth = 1 + speedNormalized * 1.5;
+                this.ctx.lineCap = 'round';
+                
+                this.ctx.beginPath();
+                this.ctx.moveTo(particle.trail[0].x, particle.trail[0].y);
+                
+                for (let i = 1; i < particle.trail.length; i++) {
+                    const trailAlpha = alpha * (i / particle.trail.length);
+                    this.ctx.globalAlpha = trailAlpha;
+                    this.ctx.lineTo(particle.trail[i].x, particle.trail[i].y);
+                }
+                
+                this.ctx.stroke();
+                this.ctx.globalAlpha = 1;
+            }
+            
+            this.ctx.fillStyle = `hsla(${hue}, 90%, 70%, ${alpha})`;
+            this.ctx.beginPath();
+            this.ctx.arc(particle.x, particle.y, 1 + speedNormalized * 1.5, 0, Math.PI * 2);
+            this.ctx.fill();
+        });
+    }
+    
+    drawVectorField() {
+        if (!this.showVectors || !this.windData) return;
+        
+        const gridSize = 35;
+        
+        for (let x = gridSize; x < this.canvas.width; x += gridSize) {
+            for (let y = gridSize; y < this.canvas.height; y += gridSize) {
+                const wind = this.getWindAtScreenPoint(x, y);
+                
+                if (wind.speed < 0.2) continue;
+                
+                const speedNormalized = Math.min(wind.speed / this.windData.maxSpeed, 1);
+                const arrowLength = 8 + speedNormalized * 15;
+                
+                const angle = Math.atan2(wind.v, wind.u);
+                const endX = x + Math.cos(angle) * arrowLength;
+                const endY = y + Math.sin(angle) * arrowLength;
+                
+                const hue = (1 - speedNormalized) * 240;
+                this.ctx.strokeStyle = `hsla(${hue}, 80%, 60%, 0.9)`;
+                this.ctx.lineWidth = 1 + speedNormalized * 1.5;
+                this.ctx.lineCap = 'round';
+                
+                this.ctx.beginPath();
+                this.ctx.moveTo(x, y);
+                this.ctx.lineTo(endX, endY);
+                this.ctx.stroke();
+                
+                const headSize = 3 + speedNormalized * 2;
+                this.ctx.beginPath();
+                this.ctx.moveTo(endX, endY);
+                this.ctx.lineTo(endX - Math.cos(angle - 0.5) * headSize,
+                               endY - Math.sin(angle - 0.5) * headSize);
+                this.ctx.moveTo(endX, endY);
+                this.ctx.lineTo(endX - Math.cos(angle + 0.5) * headSize,
+                               endY - Math.sin(angle + 0.5) * headSize);
+                this.ctx.stroke();
+            }
+        }
+    }
+    
+    animate() {
+        if (!this.isAnimating || !this.canvas) return;
+        
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.08)';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        
+        this.updateParticles();
+        this.drawParticles();
+        this.drawVectorField();
+        
+        this.animationId = requestAnimationFrame(() => this.animate());
+    }
+    
+    start() {
+        this.isAnimating = true;
+        this.animate();
+    }
+    
+    stop() {
+        this.isAnimating = false;
+        if (this.animationId) {
+            cancelAnimationFrame(this.animationId);
+        }
+    }
+    
+    destroy() {
+        this.stop();
+        if (this.canvas && this.canvas.parentNode) {
+            this.canvas.parentNode.removeChild(this.canvas);
+        }
+        this.canvas = null;
+        this.windData = null;
+        this.particles = [];
+    }
+}
+
 class GISApp {
     constructor() {
         this.map = L.map('map').setView([54.16, 19.40], 13);
         this.weatherData = { temperature: 25, wind_speed: 5, wind_direction: 270, humidity: 50 };
         this.activeLayer = null;
         this.layers = {};
-        this.windParticles = [];
-        this.rainParticles = [];
+        this.windStreamlines = null;
+        this.floodAnimationId = null;
+        this.floodCanvas = null;
         
         this.init();
     }
@@ -295,7 +580,6 @@ class GISApp {
     }
 
     setupMap() {
-        // Ciemna mapa bazowa z lepszą jakością
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
             attribution: '© OpenStreetMap, © CARTO',
             maxZoom: 20,
@@ -314,7 +598,7 @@ class GISApp {
                 this.weatherData = {
                     temperature: data.current.temperature_2m,
                     humidity: data.current.relative_humidity_2m,
-                    wind_speed: data.current.wind_speed_10m / 3.6, // m/s
+                    wind_speed: data.current.wind_speed_10m / 3.6,
                     wind_direction: data.current.wind_direction_10m
                 };
             }
@@ -368,7 +652,7 @@ class GISApp {
             wind: {
                 name: '💨 Wiatr + CFD',
                 url: './wyniki/kafelki/wiatr/{z}/{x}/{y}.png',
-                opacity: 0.6,
+                opacity: 0.4,
                 legend: this.createGradientLegend,
                 legendParams: { title: 'Prędkość wiatru [m/s]', min: 0, max: 15, gradient: 'linear-gradient(to right, #fde725, #7ad151, #22a884, #2a788e, #414487, #440154)' },
                 hasAnimation: true
@@ -382,7 +666,6 @@ class GISApp {
             }
         };
 
-        // Utworz warstwy Leaflet z poprawionymi ustawieniami
         Object.keys(this.layers).forEach(key => {
             const layer = this.layers[key];
             layer.leafletLayer = L.tileLayer(layer.url, {
@@ -390,7 +673,11 @@ class GISApp {
                 maxZoom: 18,
                 minZoom: 8,
                 tms: true,
-                errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+                crossOrigin: 'anonymous',
+                errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+                detectRetina: false,
+                updateWhenIdle: false,
+                keepBuffer: 2
             });
         });
     }
@@ -405,18 +692,15 @@ class GISApp {
     }
 
     activateLayer(layerKey) {
-        // Wyłącz poprzednią warstwę
         if (this.activeLayer) {
             this.map.removeLayer(this.layers[this.activeLayer].leafletLayer);
             document.querySelector(`[data-layer="${this.activeLayer}"]`).classList.remove('active');
             this.stopAnimations();
         }
 
-        // Włącz nową warstwę
         this.activeLayer = layerKey;
         const layer = this.layers[layerKey];
         
-        // Debug: sprawdź czy kafelki istnieją
         const testUrl = layer.url.replace('{z}', '13').replace('{x}', '4583').replace('{y}', '2671');
         fetch(testUrl).then(response => {
             if (response.ok) {
@@ -432,7 +716,6 @@ class GISApp {
         this.updateLegend(layer);
         this.updateStats(layerKey);
 
-        // Uruchom animacje jeśli potrzebne
         if (layer.hasAnimation) {
             this.startAnimations(layerKey);
         }
@@ -486,12 +769,21 @@ class GISApp {
                 content = this.createCategoryLegend();
             }
             
-            // Dodaj informacje o pogodzie dla odpowiednich warstw
             if (this.activeLayer === 'wind') {
                 content += `
                     <div class="weather-info" style="margin-top: 1rem; font-size: 0.7rem;">
                         🌪️ Bazowy: ${this.weatherData.wind_speed.toFixed(1)} m/s<br>
                         🧭 Kierunek: ${this.weatherData.wind_direction.toFixed(0)}°
+                        <div style="margin-top: 0.5rem; padding: 0.5rem; background: rgba(6, 182, 212, 0.1); border-radius: 6px; border: 1px solid rgba(6, 182, 212, 0.2);">
+                            <div style="font-size: 0.65rem; margin-bottom: 0.25rem;">🌊 Symulacja CFD</div>
+                            <div class="cfd-controls">
+                                <button class="cfd-btn" onclick="app.toggleStreamlines()">Streamlines</button>
+                                <button class="cfd-btn" onclick="app.toggleVectors()">Vectors</button>
+                            </div>
+                            <div style="font-size: 0.6rem; color: #94a3b8; margin-top: 0.5rem;" id="cfd-status">
+                                Ładowanie danych CFD...
+                            </div>
+                        </div>
                     </div>
                 `;
             } else if (this.activeLayer === 'comfort') {
@@ -504,14 +796,17 @@ class GISApp {
             } else if (this.activeLayer === 'flood') {
                 content += `
                     <div class="rainfall-timeline">
-                        <div style="font-size: 0.7rem; margin-bottom: 0.5rem;">📊 Symulacja: 70mm / 2h</div>
+                        <div style="font-size: 0.7rem; margin-bottom: 0.5rem;">📊 Symulacja: 70mm / 4h</div>
                         <div class="timeline-bar">
-                            <div class="timeline-progress"></div>
+                            <div class="timeline-progress" id="flood-progress"></div>
                         </div>
                         <div style="display: flex; justify-content: space-between; font-size: 0.6rem; margin-top: 0.25rem; color: #94a3b8;">
                             <span>0h</span>
-                            <span>1h</span>
                             <span>2h</span>
+                            <span>4h</span>
+                        </div>
+                        <div style="font-size: 0.65rem; margin-top: 0.5rem; text-align: center; color: #60a5fa;" id="flood-status">
+                            Inicjalizacja...
                         </div>
                     </div>
                 `;
@@ -525,7 +820,6 @@ class GISApp {
     }
 
     updateStats(layerKey) {
-        // Symulowane statystyki - w rzeczywistej aplikacji można by pobierać z rastrów
         const stats = {
             landcover: { min: '1', max: '7', avg: '3.2', area: '85%' },
             canopy: { min: '4.0m', max: '42.3m', avg: '18.7m', area: '34%' },
@@ -545,122 +839,202 @@ class GISApp {
 
     startAnimations(layerKey) {
         if (layerKey === 'wind') {
-            this.startWindAnimation();
+            this.startWindCFD();
         } else if (layerKey === 'flood') {
-            this.startRainAnimation();
+            this.startFloodAnimation();
         }
     }
 
-    startWindAnimation() {
-        const mapContainer = this.map.getContainer();
+    async startWindCFD() {
+        if (!this.windStreamlines) {
+            this.windStreamlines = new WindStreamlines(this.map);
+        }
         
-        // Twórz cząsteczki wiatru
-        const createWindParticle = () => {
-            const particle = document.createElement('div');
-            particle.className = 'wind-particle';
-            
-            const mapBounds = mapContainer.getBoundingClientRect();
-            const startX = Math.random() * mapBounds.width;
-            const startY = Math.random() * mapBounds.height;
-            
-            // Kierunek na podstawie pogody
-            const angle = (this.weatherData.wind_direction + Math.random() * 60 - 30) * Math.PI / 180;
-            const speed = this.weatherData.wind_speed * (0.8 + Math.random() * 0.4);
-            
-            particle.style.left = startX + 'px';
-            particle.style.top = startY + 'px';
-            particle.style.transform = `rotate(${angle}rad)`;
-            
-            mapContainer.appendChild(particle);
-            this.windParticles.push(particle);
-            
-            // Animacja ruchu
-            const duration = 3000 + Math.random() * 2000;
-            const endX = startX + Math.cos(angle) * speed * 50;
-            const endY = startY + Math.sin(angle) * speed * 50;
-            
-            particle.animate([
-                { transform: `translate(0, 0) rotate(${angle}rad)`, opacity: 0 },
-                { opacity: 0.8, offset: 0.1 },
-                { opacity: 0.8, offset: 0.9 },
-                { transform: `translate(${endX - startX}px, ${endY - startY}px) rotate(${angle}rad)`, opacity: 0 }
-            ], {
-                duration: duration,
-                easing: 'linear'
-            }).onfinish = () => {
-                if (particle.parentNode) particle.remove();
-                this.windParticles = this.windParticles.filter(p => p !== particle);
-            };
-        };
+        await this.windStreamlines.setupCanvas();
+        await this.windStreamlines.loadWindData();
+        this.windStreamlines.start();
         
-        // Twórz cząsteczki co 200ms
-        this.windInterval = setInterval(createWindParticle, 200);
-        
-        // Utwórz początkowe cząsteczki
-        for (let i = 0; i < 20; i++) {
-            setTimeout(createWindParticle, i * 100);
+        const statusElement = document.getElementById('cfd-status');
+        if (statusElement) {
+            statusElement.textContent = 'CFD aktywna - streamlines w ruchu';
         }
     }
 
-    startRainAnimation() {
-        const mapContainer = this.map.getContainer();
+    startFloodAnimation() {
+        const totalFrames = 120;
+        const frameDuration = 100;
+        let currentFrame = 0;
         
-        const createRainParticle = () => {
-            const particle = document.createElement('div');
-            particle.className = 'rain-particle';
-            
-            const mapBounds = mapContainer.getBoundingClientRect();
-            const startX = Math.random() * mapBounds.width;
-            
-            particle.style.left = startX + 'px';
-            particle.style.top = '-20px';
-            
-            mapContainer.appendChild(particle);
-            this.rainParticles.push(particle);
-            
-            particle.animate([
-                { transform: 'translateY(0px)', opacity: 0.7 },
-                { transform: `translateY(${mapBounds.height + 40}px)`, opacity: 0 }
-            ], {
-                duration: 1500 + Math.random() * 500,
-                easing: 'linear'
-            }).onfinish = () => {
-                if (particle.parentNode) particle.remove();
-                this.rainParticles = this.rainParticles.filter(p => p !== particle);
-            };
+        const mapContainer = this.map.getContainer();
+        this.floodCanvas = document.createElement('canvas');
+        this.floodCanvas.style.position = 'absolute';
+        this.floodCanvas.style.top = '0';
+        this.floodCanvas.style.left = '0';
+        this.floodCanvas.style.pointerEvents = 'none';
+        this.floodCanvas.style.zIndex = '1000';
+        this.floodCanvas.style.opacity = '0.7';
+        
+        const updateCanvasSize = () => {
+            const bounds = mapContainer.getBoundingClientRect();
+            this.floodCanvas.width = bounds.width;
+            this.floodCanvas.height = bounds.height;
+            this.floodCanvas.style.width = bounds.width + 'px';
+            this.floodCanvas.style.height = bounds.height + 'px';
         };
         
-        this.rainInterval = setInterval(createRainParticle, 100);
+        updateCanvasSize();
+        mapContainer.appendChild(this.floodCanvas);
+        const ctx = this.floodCanvas.getContext('2d');
         
-        // Utwórz początkowe krople
-        for (let i = 0; i < 30; i++) {
-            setTimeout(createRainParticle, i * 50);
+        const generateRainfallIntensity = (frame) => {
+            const timeHours = (frame / totalFrames) * 4;
+            if (timeHours < 2) {
+                return 0.8 + Math.sin(timeHours * Math.PI) * 0.2;
+            } else {
+                return Math.max(0, 0.6 * Math.exp(-(timeHours - 2)));
+            }
+        };
+        
+        const waterMap = new Map();
+        const gridSize = 8;
+        const cols = Math.ceil(this.floodCanvas.width / gridSize);
+        const rows = Math.ceil(this.floodCanvas.height / gridSize);
+        
+        const heightMap = [];
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+                const height = Math.sin(x * 0.1) * Math.cos(y * 0.1) * 5 + Math.random() * 2;
+                heightMap.push(height);
+                waterMap.set(`${x},${y}`, 0);
+            }
         }
+        
+        const animateFlood = () => {
+            if (this.activeLayer !== 'flood') return;
+            
+            const intensity = generateRainfallIntensity(currentFrame);
+            const timeHours = (currentFrame / totalFrames) * 4;
+            
+            const progressElement = document.getElementById('flood-progress');
+            const statusElement = document.getElementById('flood-status');
+            
+            if (progressElement) {
+                progressElement.style.width = `${(currentFrame / totalFrames) * 100}%`;
+            }
+            
+            if (statusElement) {
+                const phase = timeHours < 2 ? 'Intensywny opad' : 
+                             timeHours < 3 ? 'Odpływ wody' : 'Wysychanie';
+                statusElement.textContent = `${phase} (${timeHours.toFixed(1)}h)`;
+            }
+            
+            ctx.clearRect(0, 0, this.floodCanvas.width, this.floodCanvas.height);
+            
+            for (let y = 0; y < rows; y++) {
+                for (let x = 0; x < cols; x++) {
+                    const key = `${x},${y}`;
+                    const currentWater = waterMap.get(key);
+                    const heightIndex = y * cols + x;
+                    const terrain = heightMap[heightIndex];
+                    
+                    let newWater = currentWater + intensity * 0.02;
+                    
+                    if (newWater > 0.1) {
+                        const neighbors = [
+                            [x-1, y], [x+1, y], [x, y-1], [x, y+1]
+                        ].filter(([nx, ny]) => nx >= 0 && nx < cols && ny >= 0 && ny < rows);
+                        
+                        neighbors.forEach(([nx, ny]) => {
+                            const neighborKey = `${nx},${ny}`;
+                            const neighborHeight = heightMap[ny * cols + nx];
+                            
+                            if (terrain > neighborHeight) {
+                                const flow = Math.min(newWater * 0.1, newWater - 0.05);
+                                newWater -= flow;
+                                waterMap.set(neighborKey, waterMap.get(neighborKey) + flow);
+                            }
+                        });
+                    }
+                    
+                    newWater = Math.max(0, newWater * 0.98);
+                    waterMap.set(key, newWater);
+                    
+                    if (newWater > 0.05) {
+                        const alpha = Math.min(newWater * 2, 0.8);
+                        const depth = Math.min(newWater, 1.0);
+                        
+                        const blue = Math.floor(100 + depth * 155);
+                        ctx.fillStyle = `rgba(30, 144, ${blue}, ${alpha})`;
+                        
+                        ctx.fillRect(x * gridSize, y * gridSize, gridSize, gridSize);
+                        
+                        if (depth > 0.3) {
+                            const waveOffset = Math.sin(currentFrame * 0.2 + x * 0.3) * 2;
+                            ctx.fillStyle = `rgba(255, 255, 255, ${alpha * 0.3})`;
+                            ctx.fillRect(x * gridSize, y * gridSize + waveOffset, gridSize, 1);
+                        }
+                    }
+                }
+            }
+            
+            if (intensity > 0.1) {
+                for (let i = 0; i < intensity * 100; i++) {
+                    const x = Math.random() * this.floodCanvas.width;
+                    const y = Math.random() * this.floodCanvas.height;
+                    const size = 1 + Math.random() * 2;
+                    
+                    ctx.fillStyle = `rgba(173, 216, 230, ${intensity * 0.6})`;
+                    ctx.beginPath();
+                    ctx.arc(x, y, size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+            
+            currentFrame = (currentFrame + 1) % totalFrames;
+            this.floodAnimationId = setTimeout(animateFlood, frameDuration);
+        };
+        
+        animateFlood();
+        this.map.on('resize', updateCanvasSize);
     }
 
     stopAnimations() {
-        // Wyczyść interwały
-        if (this.windInterval) {
-            clearInterval(this.windInterval);
-            this.windInterval = null;
+        if (this.windStreamlines) {
+            this.windStreamlines.stop();
         }
         
-        if (this.rainInterval) {
-            clearInterval(this.rainInterval);
-            this.rainInterval = null;
+        if (this.floodAnimationId) {
+            clearTimeout(this.floodAnimationId);
+            this.floodAnimationId = null;
         }
         
-        // Usuń cząsteczki
-        this.windParticles.forEach(p => p.remove && p.remove());
-        this.rainParticles.forEach(p => p.remove && p.remove());
-        this.windParticles = [];
-        this.rainParticles = [];
+        if (this.floodCanvas) {
+            this.floodCanvas.remove();
+            this.floodCanvas = null;
+        }
+    }
+
+    toggleStreamlines() {
+        if (this.windStreamlines) {
+            this.windStreamlines.showParticles = !this.windStreamlines.showParticles;
+            const btn = event.target;
+            btn.classList.toggle('active');
+        }
+    }
+
+    toggleVectors() {
+        if (this.windStreamlines) {
+            this.windStreamlines.showVectors = !this.windStreamlines.showVectors;
+            const btn = event.target;
+            btn.classList.toggle('active');
+        }
     }
 }
 
-// Inicjalizuj aplikację
+// Inicjalizacja aplikacji
+let app;
 document.addEventListener('DOMContentLoaded', () => {
-    new GISApp();
+    app = new GISApp();
 });
 </script>
 </body>
