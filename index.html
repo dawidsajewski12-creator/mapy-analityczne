@@ -1,11 +1,12 @@
 <!DOCTYPE html>
 <html lang="pl">
 <head>
-    <title>Mapy Analityczne - Statyczna Wersja</title>
+    <title>Mapy Analityczne - Enhanced</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/geotiff@2.0.7/dist-browser/geotiff.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         
@@ -157,6 +158,61 @@
             font-weight: 500;
         }
 
+        /* Animacje CFD */
+        .wind-particle {
+            position: absolute;
+            width: 2px;
+            height: 8px;
+            background: #60a5fa;
+            border-radius: 1px;
+            pointer-events: none;
+            opacity: 0.8;
+            box-shadow: 0 0 4px #3b82f6;
+        }
+
+        .rain-particle {
+            position: absolute;
+            width: 2px;
+            height: 12px;
+            background: linear-gradient(to bottom, transparent, #06b6d4);
+            border-radius: 1px;
+            pointer-events: none;
+            opacity: 0.7;
+        }
+
+        /* Timeline dla opadów */
+        .rainfall-timeline {
+            margin-top: 1rem;
+            padding: 1rem;
+            background: rgba(6, 182, 212, 0.1);
+            border-radius: 8px;
+            border: 1px solid rgba(6, 182, 212, 0.2);
+        }
+
+        .timeline-bar {
+            height: 20px;
+            background: linear-gradient(to right, #0891b2, #06b6d4, #67e8f9);
+            border-radius: 10px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .timeline-progress {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            width: 0%;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 10px;
+            animation: rainProgress 4s linear infinite;
+        }
+
+        @keyframes rainProgress {
+            0% { width: 0%; }
+            100% { width: 100%; }
+        }
+
         /* Responsive */
         @media (max-width: 1024px) {
             .container { flex-direction: column; }
@@ -184,7 +240,7 @@
                 <button class="layer-btn" data-layer="canopy">🌳 Korony drzew</button>
                 <button class="layer-btn" data-layer="nmt">⛰️ Model terenu</button>
                 <button class="layer-btn" data-layer="flood">🌊 Podtopienia</button>
-                <button class="layer-btn" data-layer="wind">💨 Wiatr</button>
+                <button class="layer-btn" data-layer="wind">💨 Wiatr + CFD</button>
                 <button class="layer-btn" data-layer="comfort">🌡️ Komfort termiczny</button>
             </div>
         </div>
@@ -224,6 +280,8 @@ class GISApp {
         this.weatherData = { temperature: 25, wind_speed: 5, wind_direction: 270, humidity: 50 };
         this.activeLayer = null;
         this.layers = {};
+        this.windParticles = [];
+        this.rainParticles = [];
         
         this.init();
     }
@@ -237,6 +295,7 @@ class GISApp {
     }
 
     setupMap() {
+        // Ciemna mapa bazowa z lepszą jakością
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
             attribution: '© OpenStreetMap, © CARTO',
             maxZoom: 20,
@@ -255,7 +314,7 @@ class GISApp {
                 this.weatherData = {
                     temperature: data.current.temperature_2m,
                     humidity: data.current.relative_humidity_2m,
-                    wind_speed: data.current.wind_speed_10m / 3.6,
+                    wind_speed: data.current.wind_speed_10m / 3.6, // m/s
                     wind_direction: data.current.wind_direction_10m
                 };
             }
@@ -303,14 +362,16 @@ class GISApp {
                 url: './wyniki/kafelki/podtopienia/{z}/{x}/{y}.png',
                 opacity: 0.7,
                 legend: this.createGradientLegend,
-                legendParams: { title: 'Głębokość wody [m]', min: 0.01, max: 1.5, gradient: 'linear-gradient(to right, #deebf7, #9ecae1, #6baed6, #4292c6, #2171b5, #08519c)' }
+                legendParams: { title: 'Głębokość wody [m]', min: 0.01, max: 1.5, gradient: 'linear-gradient(to right, #deebf7, #9ecae1, #6baed6, #4292c6, #2171b5, #08519c)' },
+                hasAnimation: true
             },
             wind: {
-                name: '💨 Wiatr',
+                name: '💨 Wiatr + CFD',
                 url: './wyniki/kafelki/wiatr/{z}/{x}/{y}.png',
                 opacity: 0.6,
                 legend: this.createGradientLegend,
-                legendParams: { title: 'Prędkość wiatru [m/s]', min: 0, max: 15, gradient: 'linear-gradient(to right, #fde725, #7ad151, #22a884, #2a788e, #414487, #440154)' }
+                legendParams: { title: 'Prędkość wiatru [m/s]', min: 0, max: 15, gradient: 'linear-gradient(to right, #fde725, #7ad151, #22a884, #2a788e, #414487, #440154)' },
+                hasAnimation: true
             },
             comfort: {
                 name: '🌡️ Komfort termiczny',
@@ -321,7 +382,7 @@ class GISApp {
             }
         };
 
-        // Tworzenie warstw Leaflet
+        // Utworz warstwy Leaflet z poprawionymi ustawieniami
         Object.keys(this.layers).forEach(key => {
             const layer = this.layers[key];
             layer.leafletLayer = L.tileLayer(layer.url, {
@@ -329,11 +390,7 @@ class GISApp {
                 maxZoom: 18,
                 minZoom: 8,
                 tms: true,
-                crossOrigin: 'anonymous',
-                errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
-                detectRetina: false,
-                updateWhenIdle: false,
-                keepBuffer: 2
+                errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
             });
         });
     }
@@ -348,17 +405,18 @@ class GISApp {
     }
 
     activateLayer(layerKey) {
-        // Usuń aktualną warstwę
+        // Wyłącz poprzednią warstwę
         if (this.activeLayer) {
             this.map.removeLayer(this.layers[this.activeLayer].leafletLayer);
             document.querySelector(`[data-layer="${this.activeLayer}"]`).classList.remove('active');
+            this.stopAnimations();
         }
 
-        // Aktywuj nową warstwę
+        // Włącz nową warstwę
         this.activeLayer = layerKey;
         const layer = this.layers[layerKey];
         
-        // Test dostępności kafelków
+        // Debug: sprawdź czy kafelki istnieją
         const testUrl = layer.url.replace('{z}', '13').replace('{x}', '4583').replace('{y}', '2671');
         fetch(testUrl).then(response => {
             if (response.ok) {
@@ -373,6 +431,11 @@ class GISApp {
 
         this.updateLegend(layer);
         this.updateStats(layerKey);
+
+        // Uruchom animacje jeśli potrzebne
+        if (layer.hasAnimation) {
+            this.startAnimations(layerKey);
+        }
     }
 
     createGradientLegend(params) {
@@ -423,7 +486,7 @@ class GISApp {
                 content = this.createCategoryLegend();
             }
             
-            // Dodaj informacje kontekstowe dla konkretnych warstw
+            // Dodaj informacje o pogodzie dla odpowiednich warstw
             if (this.activeLayer === 'wind') {
                 content += `
                     <div class="weather-info" style="margin-top: 1rem; font-size: 0.7rem;">
@@ -440,9 +503,16 @@ class GISApp {
                 `;
             } else if (this.activeLayer === 'flood') {
                 content += `
-                    <div class="weather-info" style="margin-top: 1rem; font-size: 0.7rem;">
-                        📊 Symulacja: 70mm / 4h<br>
-                        ⏱️ Czas trwania: 4h
+                    <div class="rainfall-timeline">
+                        <div style="font-size: 0.7rem; margin-bottom: 0.5rem;">📊 Symulacja: 70mm / 2h</div>
+                        <div class="timeline-bar">
+                            <div class="timeline-progress"></div>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 0.6rem; margin-top: 0.25rem; color: #94a3b8;">
+                            <span>0h</span>
+                            <span>1h</span>
+                            <span>2h</span>
+                        </div>
                     </div>
                 `;
             }
@@ -455,6 +525,7 @@ class GISApp {
     }
 
     updateStats(layerKey) {
+        // Symulowane statystyki - w rzeczywistej aplikacji można by pobierać z rastrów
         const stats = {
             landcover: { min: '1', max: '7', avg: '3.2', area: '85%' },
             canopy: { min: '4.0m', max: '42.3m', avg: '18.7m', area: '34%' },
@@ -471,9 +542,123 @@ class GISApp {
         document.getElementById('stat-avg').textContent = layerStats.avg;
         document.getElementById('stat-area').textContent = layerStats.area;
     }
+
+    startAnimations(layerKey) {
+        if (layerKey === 'wind') {
+            this.startWindAnimation();
+        } else if (layerKey === 'flood') {
+            this.startRainAnimation();
+        }
+    }
+
+    startWindAnimation() {
+        const mapContainer = this.map.getContainer();
+        
+        // Twórz cząsteczki wiatru
+        const createWindParticle = () => {
+            const particle = document.createElement('div');
+            particle.className = 'wind-particle';
+            
+            const mapBounds = mapContainer.getBoundingClientRect();
+            const startX = Math.random() * mapBounds.width;
+            const startY = Math.random() * mapBounds.height;
+            
+            // Kierunek na podstawie pogody
+            const angle = (this.weatherData.wind_direction + Math.random() * 60 - 30) * Math.PI / 180;
+            const speed = this.weatherData.wind_speed * (0.8 + Math.random() * 0.4);
+            
+            particle.style.left = startX + 'px';
+            particle.style.top = startY + 'px';
+            particle.style.transform = `rotate(${angle}rad)`;
+            
+            mapContainer.appendChild(particle);
+            this.windParticles.push(particle);
+            
+            // Animacja ruchu
+            const duration = 3000 + Math.random() * 2000;
+            const endX = startX + Math.cos(angle) * speed * 50;
+            const endY = startY + Math.sin(angle) * speed * 50;
+            
+            particle.animate([
+                { transform: `translate(0, 0) rotate(${angle}rad)`, opacity: 0 },
+                { opacity: 0.8, offset: 0.1 },
+                { opacity: 0.8, offset: 0.9 },
+                { transform: `translate(${endX - startX}px, ${endY - startY}px) rotate(${angle}rad)`, opacity: 0 }
+            ], {
+                duration: duration,
+                easing: 'linear'
+            }).onfinish = () => {
+                if (particle.parentNode) particle.remove();
+                this.windParticles = this.windParticles.filter(p => p !== particle);
+            };
+        };
+        
+        // Twórz cząsteczki co 200ms
+        this.windInterval = setInterval(createWindParticle, 200);
+        
+        // Utwórz początkowe cząsteczki
+        for (let i = 0; i < 20; i++) {
+            setTimeout(createWindParticle, i * 100);
+        }
+    }
+
+    startRainAnimation() {
+        const mapContainer = this.map.getContainer();
+        
+        const createRainParticle = () => {
+            const particle = document.createElement('div');
+            particle.className = 'rain-particle';
+            
+            const mapBounds = mapContainer.getBoundingClientRect();
+            const startX = Math.random() * mapBounds.width;
+            
+            particle.style.left = startX + 'px';
+            particle.style.top = '-20px';
+            
+            mapContainer.appendChild(particle);
+            this.rainParticles.push(particle);
+            
+            particle.animate([
+                { transform: 'translateY(0px)', opacity: 0.7 },
+                { transform: `translateY(${mapBounds.height + 40}px)`, opacity: 0 }
+            ], {
+                duration: 1500 + Math.random() * 500,
+                easing: 'linear'
+            }).onfinish = () => {
+                if (particle.parentNode) particle.remove();
+                this.rainParticles = this.rainParticles.filter(p => p !== particle);
+            };
+        };
+        
+        this.rainInterval = setInterval(createRainParticle, 100);
+        
+        // Utwórz początkowe krople
+        for (let i = 0; i < 30; i++) {
+            setTimeout(createRainParticle, i * 50);
+        }
+    }
+
+    stopAnimations() {
+        // Wyczyść interwały
+        if (this.windInterval) {
+            clearInterval(this.windInterval);
+            this.windInterval = null;
+        }
+        
+        if (this.rainInterval) {
+            clearInterval(this.rainInterval);
+            this.rainInterval = null;
+        }
+        
+        // Usuń cząsteczki
+        this.windParticles.forEach(p => p.remove && p.remove());
+        this.rainParticles.forEach(p => p.remove && p.remove());
+        this.windParticles = [];
+        this.rainParticles = [];
+    }
 }
 
-// Inicjalizacja aplikacji
+// Inicjalizuj aplikację
 document.addEventListener('DOMContentLoaded', () => {
     new GISApp();
 });
