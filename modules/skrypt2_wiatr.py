@@ -117,6 +117,27 @@ def smagorinsky_viscosity(ux, uy, cs, dx, base_nu):
     
     return base_nu + nu_t
 
+#
+def export_velocity_field(ux, uy, buildings, output_path):
+    """Export velocity field for web visualization"""
+    
+    # Downsample dla web performance
+    step = 2  # Co drugi punkt
+    ux_down = ux[::step, ::step]
+    uy_down = uy[::step, ::step]
+    buildings_down = buildings[::step, ::step]
+    
+    export_data = {
+        'u': ux_down.flatten().tolist(),
+        'v': uy_down.flatten().tolist(),
+        'buildings': buildings_down.astype(int).flatten().tolist(),
+        'width': ux_down.shape[1],
+        'height': ux_down.shape[0],
+        'resolution': step * 5  # meters
+    }
+    
+    with open(output_path.replace('.tif', '_velocity_field.json'), 'w') as f:
+        json.dump(export_data, f)
 class LatticeBoltzmannCFD:
     """Advanced LBM CFD solver"""
     
