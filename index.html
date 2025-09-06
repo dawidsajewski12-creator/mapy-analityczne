@@ -1,980 +1,616 @@
 <!DOCTYPE html>
-<html lang="pl">
+<html lang="en">
 <head>
-    <title>Optimized Urban Analytics</title>
-    <meta charset="utf-8" />
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+    <title>Urban Wind Flow</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         
-        html, body {
-            height: 100%;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: #0f172a;
-            color: #e2e8f0;
+        body {
+            font-family: -apple-system, system-ui, sans-serif;
+            background: #000;
             overflow: hidden;
         }
-
-        .app-container {
-            display: flex;
-            height: 100vh;
-            position: relative;
-        }
-
-        #map {
-            flex: 1;
-            position: relative;
-            background: #1e293b;
-        }
-
-        .control-panel {
-            width: 320px;
-            background: rgba(15, 23, 42, 0.95);
-            backdrop-filter: blur(20px);
-            border-left: 1px solid rgba(255, 255, 255, 0.1);
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-
-        .panel-section {
-            padding: 1rem;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-        }
-
-        .panel-section h3 {
-            color: #60a5fa;
-            margin-bottom: 0.75rem;
-            font-size: 0.875rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .layer-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 0.5rem;
-        }
-
-        .layer-btn {
-            padding: 0.75rem;
-            border: 1px solid rgba(96, 165, 250, 0.2);
-            border-radius: 8px;
-            background: rgba(30, 41, 59, 0.4);
-            color: #e2e8f0;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            font-size: 0.8rem;
-            text-align: center;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .layer-btn:hover {
-            background: rgba(96, 165, 250, 0.1);
-            border-color: rgba(96, 165, 250, 0.4);
-            transform: translateY(-1px);
-        }
-
-        .layer-btn.active {
-            background: linear-gradient(135deg, #3b82f6, #1d4ed8);
-            border-color: #3b82f6;
-            color: white;
-            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
-        }
-
-        .layer-btn.loading::after {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
-            animation: loading-sweep 1.5s infinite;
-        }
-
-        @keyframes loading-sweep {
-            0% { left: -100%; }
-            100% { left: 100%; }
-        }
-
-        .stats-container {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 0.5rem;
-            margin-top: 0.75rem;
-        }
-
-        .stat-card {
-            background: rgba(30, 41, 59, 0.6);
-            padding: 0.5rem;
-            border-radius: 6px;
-            text-align: center;
-            border: 1px solid rgba(255, 255, 255, 0.05);
-        }
-
-        .stat-value {
-            font-size: 1.1rem;
-            font-weight: 700;
-            color: #60a5fa;
-            display: block;
-        }
-
-        .stat-label {
-            font-size: 0.65rem;
-            color: #94a3b8;
-            text-transform: uppercase;
-            margin-top: 0.25rem;
-        }
-
-        .weather-card {
-            background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(147, 51, 234, 0.1));
-            border: 1px solid rgba(59, 130, 246, 0.2);
-            padding: 1rem;
-            border-radius: 12px;
-            margin-bottom: 1rem;
-        }
-
-        .legend {
-            background: rgba(15, 23, 42, 0.95);
-            backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 12px;
-            padding: 1rem;
-            position: absolute;
-            bottom: 2rem;
-            left: 2rem;
-            min-width: 200px;
-            max-width: 300px;
-            z-index: 1000;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-            transition: all 0.3s ease;
-            transform: translateY(0);
-        }
-
-        .legend.hidden {
-            transform: translateY(calc(100% + 2rem));
-            opacity: 0;
-            pointer-events: none;
-        }
-
-        .legend-title {
-            font-weight: 600;
-            color: #60a5fa;
-            margin-bottom: 0.75rem;
-            font-size: 0.9rem;
-        }
-
-        .gradient-bar {
-            width: 100%;
-            height: 20px;
-            border-radius: 10px;
-            margin: 0.5rem 0;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        .gradient-labels {
-            display: flex;
-            justify-content: space-between;
-            font-size: 0.7rem;
-            color: #94a3b8;
-        }
-
-        /* Performance optimized animations */
-        .wind-particle {
-            position: absolute;
-            width: 2px;
-            height: 8px;
-            background: #60a5fa;
-            border-radius: 1px;
-            pointer-events: none;
-            will-change: transform;
-            contain: strict;
-        }
-
-        .rain-drop {
-            position: absolute;
-            width: 2px;
-            height: 12px;
-            background: linear-gradient(to bottom, transparent, #06b6d4);
-            border-radius: 1px;
-            pointer-events: none;
-            will-change: transform;
-            contain: strict;
-        }
-
-        /* Sandbox mode styles */
-        .sandbox-panel {
-            background: rgba(147, 51, 234, 0.1);
-            border: 1px solid rgba(147, 51, 234, 0.3);
-            display: none;
-        }
-
-        .sandbox-panel.active {
-            display: block;
-        }
-
-        .tool-group {
-            margin-bottom: 1rem;
-        }
-
-        .tool-btn {
-            padding: 0.5rem;
-            margin: 0.25rem;
-            background: rgba(147, 51, 234, 0.2);
-            border: 1px solid rgba(147, 51, 234, 0.4);
-            border-radius: 6px;
-            color: #e2e8f0;
-            cursor: pointer;
-            font-size: 0.8rem;
-        }
-
-        .tool-btn.active {
-            background: #9333ea;
-            color: white;
-        }
-
-        /* Loading overlay */
-        .loading-overlay {
+        
+        #canvas {
             position: absolute;
             top: 0;
             left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(15, 23, 42, 0.8);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 10000;
-            backdrop-filter: blur(4px);
+            width: 100%;
+            height: 100%;
         }
-
-        .loading-spinner {
-            width: 50px;
-            height: 50px;
-            border: 3px solid rgba(96, 165, 250, 0.3);
-            border-top: 3px solid #60a5fa;
+        
+        .controls {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.8);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+            padding: 20px;
+            border-radius: 12px;
+            color: #fff;
+            width: 280px;
+            z-index: 100;
+        }
+        
+        .control-group {
+            margin-bottom: 15px;
+        }
+        
+        .control-group label {
+            display: block;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            opacity: 0.6;
+            margin-bottom: 5px;
+        }
+        
+        .slider {
+            width: 100%;
+            -webkit-appearance: none;
+            height: 2px;
+            background: rgba(255,255,255,0.1);
+            outline: none;
+        }
+        
+        .slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 12px;
+            height: 12px;
+            background: #fff;
             border-radius: 50%;
-            animation: spin 1s linear infinite;
+            cursor: pointer;
         }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+        
+        .stats {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: #fff;
+            font-size: 10px;
+            font-family: monospace;
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 4px;
         }
-
-        /* Responsive design */
-        @media (max-width: 768px) {
-            .control-panel {
-                position: absolute;
-                right: -320px;
-                top: 0;
-                height: 100%;
-                z-index: 2000;
-                transition: right 0.3s ease;
-            }
-            
-            .control-panel.open {
-                right: 0;
-            }
-            
-            .mobile-toggle {
-                position: absolute;
-                top: 1rem;
-                right: 1rem;
-                z-index: 1001;
-                background: rgba(15, 23, 42, 0.9);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 6px;
-                padding: 0.5rem;
-                color: #e2e8f0;
-                cursor: pointer;
-            }
+        
+        .layer-toggle {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .layer-btn {
+            flex: 1;
+            padding: 8px;
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+            color: #fff;
+            font-size: 11px;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+        
+        .layer-btn.active {
+            background: rgba(255,255,255,0.3);
+            border-color: #fff;
+        }
+        
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #fff;
+            font-size: 12px;
+            letter-spacing: 2px;
         }
     </style>
 </head>
 <body>
-    <div class="app-container">
-        <div id="map"></div>
+    <canvas id="canvas"></canvas>
+    
+    <div id="loading">LOADING VELOCITY FIELD...</div>
+    
+    <div class="controls">
+        <div class="control-group">
+            <label>Wind Speed</label>
+            <input type="range" class="slider" id="windSpeed" min="0" max="30" value="10" step="0.5">
+            <span id="windSpeedValue">10 m/s</span>
+        </div>
         
-        <!-- Mobile toggle button -->
-        <button class="mobile-toggle" id="mobile-toggle" style="display: none;">☰</button>
+        <div class="control-group">
+            <label>Wind Direction</label>
+            <input type="range" class="slider" id="windDirection" min="0" max="360" value="270" step="5">
+            <span id="windDirectionValue">270°</span>
+        </div>
         
-        <!-- Control Panel -->
-        <div class="control-panel" id="control-panel">
-            <!-- Weather Section -->
-            <div class="panel-section">
-                <h3>🌤️ Pogoda</h3>
-                <div class="weather-card">
-                    <div id="weather-display">Ładowanie...</div>
-                </div>
-            </div>
-
-            <!-- Layer Controls -->
-            <div class="panel-section">
-                <h3>🗺️ Warstwy</h3>
-                <div class="layer-grid">
-                    <button class="layer-btn" data-layer="landcover">🏗️ Teren</button>
-                    <button class="layer-btn" data-layer="buildings">🏢 Budynki</button>
-                    <button class="layer-btn" data-layer="canopy">🌳 Drzewa</button>
-                    <button class="layer-btn" data-layer="nmt">⛰️ Wysokości</button>
-                    <button class="layer-btn" data-layer="flood">🌊 Podtopienia</button>
-                    <button class="layer-btn" data-layer="wind">💨 Wiatr</button>
-                    <button class="layer-btn" data-layer="comfort">🌡️ Komfort</button>
-                    <button class="layer-btn" data-layer="sandbox">⚡ Piaskownica</button>
-                </div>
-            </div>
-
-            <!-- Statistics -->
-            <div class="panel-section">
-                <h3>📊 Statystyki</h3>
-                <div class="stats-container">
-                    <div class="stat-card">
-                        <span class="stat-value" id="stat-min">-</span>
-                        <div class="stat-label">Min</div>
-                    </div>
-                    <div class="stat-card">
-                        <span class="stat-value" id="stat-max">-</span>
-                        <div class="stat-label">Max</div>
-                    </div>
-                    <div class="stat-card">
-                        <span class="stat-value" id="stat-avg">-</span>
-                        <div class="stat-label">Średnia</div>
-                    </div>
-                    <div class="stat-card">
-                        <span class="stat-value" id="stat-cover">-</span>
-                        <div class="stat-label">Pokrycie</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Sandbox Tools -->
-            <div class="panel-section sandbox-panel" id="sandbox-panel">
-                <h3>⚡ Narzędzia</h3>
-                <div class="tool-group">
-                    <button class="tool-btn" data-tool="building">➕ Budynek</button>
-                    <button class="tool-btn" data-tool="tree">🌳 Drzewo</button>
-                    <button class="tool-btn" data-tool="terrain">⛰️ Teren</button>
-                    <button class="tool-btn" data-tool="erase">🗑️ Usuń</button>
-                </div>
-                <div>
-                    <label style="font-size: 0.8rem; color: #94a3b8;">Wysokość:</label>
-                    <input type="range" id="height-slider" min="1" max="50" value="10" 
-                           style="width: 100%; margin-top: 0.5rem;">
-                    <span id="height-value" style="font-size: 0.8rem; color: #60a5fa;">10m</span>
-                </div>
+        <div class="control-group">
+            <label>Particle Count</label>
+            <input type="range" class="slider" id="particleCount" min="1000" max="50000" value="10000" step="1000">
+            <span id="particleCountValue">10000</span>
+        </div>
+        
+        <div class="control-group">
+            <label>Particle Speed</label>
+            <input type="range" class="slider" id="particleSpeed" min="0.1" max="5" value="1" step="0.1">
+        </div>
+        
+        <div class="control-group">
+            <label>Visualization</label>
+            <div class="layer-toggle">
+                <button class="layer-btn active" data-mode="flow">Flow</button>
+                <button class="layer-btn" data-mode="pressure">Pressure</button>
+                <button class="layer-btn" data-mode="vorticity">Vorticity</button>
             </div>
         </div>
-
-        <!-- Legend -->
-        <div class="legend hidden" id="legend">
-            <div id="legend-content"></div>
-        </div>
-
-        <!-- Loading Overlay -->
-        <div class="loading-overlay" id="loading-overlay" style="display: none;">
-            <div>
-                <div class="loading-spinner"></div>
-                <div style="margin-top: 1rem; text-align: center; color: #94a3b8;">
-                    Obliczenia w toku...
-                </div>
+        
+        <div class="control-group">
+            <label>Layers</label>
+            <div class="layer-toggle">
+                <button class="layer-btn active" data-layer="buildings">Buildings</button>
+                <button class="layer-btn" data-layer="terrain">Terrain</button>
             </div>
         </div>
     </div>
+    
+    <div class="stats">
+        <div>FPS: <span id="fps">60</span></div>
+        <div>Particles: <span id="activeParticles">0</span></div>
+        <div>Velocity: <span id="maxVelocity">0</span> m/s</div>
+    </div>
 
     <script>
-        class OptimizedGISApp {
+        class WindFlowVisualization {
             constructor() {
-                this.map = null;
-                this.activeLayer = null;
-                this.layers = {};
-                this.weatherData = {};
-                this.tileCache = new Map();
-                this.animationFrameId = null;
+                this.canvas = document.getElementById('canvas');
+                this.ctx = this.canvas.getContext('2d', { alpha: false });
                 this.particles = [];
-                this.debounceTimers = new Map();
-                this.isLoading = false;
-                this.sandboxMode = false;
-                this.sandboxTool = null;
-                this.modifications = [];
+                this.velocityField = null;
+                this.buildingMask = null;
+                this.terrainData = null;
+                
+                // Grid params matching CFD simulation
+                this.gridWidth = 400;
+                this.gridHeight = 400;
+                this.cellSize = 5; // meters
+                
+                // Rendering params
+                this.particleCount = 10000;
+                this.particleSpeed = 1;
+                this.fadeOpacity = 0.98;
+                this.lineWidth = 1;
+                this.colorMode = 'flow';
+                
+                // Wind params
+                this.windSpeed = 10;
+                this.windDirection = 270;
+                
+                // Performance
+                this.frameCount = 0;
+                this.lastTime = performance.now();
+                this.fps = 60;
                 
                 this.init();
             }
-
+            
             async init() {
-                this.setupMap();
+                this.setupCanvas();
+                await this.loadVelocityField();
+                await this.loadTerrainData();
+                this.initParticles();
                 this.setupControls();
-                this.setupMobile();
-                await this.loadWeatherData();
-                this.setupLayers();
-                this.activateLayer('landcover');
+                this.animate();
                 
-                // Performance monitoring
-                this.startPerformanceMonitoring();
+                document.getElementById('loading').style.display = 'none';
             }
-
-            setupMap() {
-                this.map = L.map('map', {
-                    preferCanvas: true,  // Better performance for many features
-                    zoomControl: false
-                }).setView([54.16, 19.40], 13);
-
-                // High-performance base layer
-                L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                    attribution: '© OpenStreetMap, © CARTO',
-                    maxZoom: 20,
-                    minZoom: 8,
-                    updateWhenIdle: true,  // Performance optimization
-                    keepBuffer: 4  // Cache more tiles
-                }).addTo(this.map);
-
-                L.control.zoom({ position: 'topright' }).addTo(this.map);
-
-                // Click handler with debouncing
-                this.map.on('click', this.debounce((e) => {
-                    this.handleMapClick(e);
-                }, 100));
-            }
-
-            setupControls() {
-                // Layer buttons with optimized event handling
-                document.querySelectorAll('.layer-btn').forEach(btn => {
-                    btn.addEventListener('click', this.debounce((e) => {
-                        const layer = e.target.dataset.layer;
-                        if (layer === 'sandbox') {
-                            this.toggleSandbox();
-                        } else {
-                            this.activateLayer(layer);
-                        }
-                    }, 200));
-                });
-
-                // Sandbox tools
-                document.querySelectorAll('.tool-btn').forEach(btn => {
-                    btn.addEventListener('click', (e) => {
-                        this.selectTool(e.target.dataset.tool);
-                    });
-                });
-
-                // Height slider
-                const heightSlider = document.getElementById('height-slider');
-                const heightValue = document.getElementById('height-value');
-                heightSlider.addEventListener('input', (e) => {
-                    heightValue.textContent = e.target.value + 'm';
-                });
-            }
-
-            setupMobile() {
-                const toggle = document.getElementById('mobile-toggle');
-                const panel = document.getElementById('control-panel');
-                
-                if (window.innerWidth <= 768) {
-                    toggle.style.display = 'block';
-                    toggle.addEventListener('click', () => {
-                        panel.classList.toggle('open');
-                    });
-                }
-            }
-
-            debounce(func, wait) {
-                return (...args) => {
-                    const key = func.toString();
-                    clearTimeout(this.debounceTimers.get(key));
-                    this.debounceTimers.set(key, setTimeout(() => func.apply(this, args), wait));
+            
+            setupCanvas() {
+                const resize = () => {
+                    this.canvas.width = window.innerWidth;
+                    this.canvas.height = window.innerHeight;
+                    this.scaleX = this.canvas.width / this.gridWidth;
+                    this.scaleY = this.canvas.height / this.gridHeight;
                 };
+                resize();
+                window.addEventListener('resize', resize);
+                
+                // Performance: disable image smoothing
+                this.ctx.imageSmoothingEnabled = false;
             }
-
-            async loadWeatherData() {
+            
+            async loadVelocityField() {
+                // Simulate loading CFD data from backend
+                // In production: fetch from skrypt2_wiatr.py output
+                
                 try {
-                    const response = await fetch('./wyniki/weather_data.json');
+                    // Try loading actual data
+                    const response = await fetch('./wyniki/rastry/wind_velocity_field.json');
                     if (response.ok) {
                         const data = await response.json();
-                        this.weatherData = data.current;
+                        this.velocityField = data;
                     } else {
-                        // Fallback weather data
-                        this.weatherData = {
-                            temperature: 20,
-                            humidity: 60,
-                            wind_speed: 5,
-                            wind_direction: 270
-                        };
+                        this.generateSyntheticField();
                     }
-                } catch (error) {
-                    console.warn('Weather data loading failed:', error);
-                    this.weatherData = {
-                        temperature: 20,
-                        humidity: 60,
-                        wind_speed: 5,
-                        wind_direction: 270
-                    };
+                } catch {
+                    this.generateSyntheticField();
                 }
-                
-                this.updateWeatherDisplay();
             }
-
-            updateWeatherDisplay() {
-                const display = document.getElementById('weather-display');
-                const w = this.weatherData;
-                display.innerHTML = `
-                    🌡️ ${w.temperature?.toFixed(1) || '20.0'}°C<br>
-                    💧 ${w.humidity || '60'}% RH<br>
-                    💨 ${w.wind_speed?.toFixed(1) || '5.0'} m/s<br>
-                    🧭 ${w.wind_direction?.toFixed(0) || '270'}°
-                `;
-            }
-
-            setupLayers() {
-                this.layers = {
-                    landcover: {
-                        name: 'Pokrycie terenu',
-                        url: './wyniki/kafelki/landcover/{z}/{x}/{y}.png',
-                        opacity: 0.8,
-                        legend: this.createCategoryLegend()
-                    },
-                    buildings: {
-                        name: 'Budynki',
-                        url: './wyniki/kafelki/budynki/{z}/{x}/{y}.png',
-                        opacity: 0.85,
-                        legend: this.createGradientLegend('Wysokość [m]', 0, 50, 'viridis')
-                    },
-                    canopy: {
-                        name: 'Drzewa',
-                        url: './wyniki/kafelki/korony_drzew/{z}/{x}/{y}.png',
-                        opacity: 0.85,
-                        legend: this.createGradientLegend('Wysokość [m]', 0, 40, 'greens')
-                    },
-                    nmt: {
-                        name: 'Wysokości terenu',
-                        url: './wyniki/kafelki/nmt/{z}/{x}/{y}.png',
-                        opacity: 0.8,
-                        legend: this.createGradientLegend('Wysokość n.p.m.', 0, 100, 'terrain')
-                    },
-                    flood: {
-                        name: 'Podtopienia',
-                        url: './wyniki/kafelki/podtopienia/{z}/{x}/{y}.png',
-                        opacity: 0.7,
-                        legend: this.createGradientLegend('Głębokość [m]', 0, 2, 'blues'),
-                        hasAnimation: true
-                    },
-                    wind: {
-                        name: 'Wiatr CFD',
-                        url: './wyniki/kafelki/wiatr/{z}/{x}/{y}.png',
-                        opacity: 0.6,
-                        legend: this.createGradientLegend('Prędkość [m/s]', 0, 15, 'plasma'),
-                        hasAnimation: true
-                    },
-                    comfort: {
-                        name: 'Komfort termiczny',
-                        url: './wyniki/kafelki/komfort/{z}/{x}/{y}.png',
-                        opacity: 0.8,
-                        legend: this.createGradientLegend('UTCI [°C]', 10, 40, 'rdylbu')
-                    }
+            
+            generateSyntheticField() {
+                // Generate realistic urban wind field with building wakes
+                this.velocityField = {
+                    u: new Float32Array(this.gridWidth * this.gridHeight),
+                    v: new Float32Array(this.gridWidth * this.gridHeight),
+                    buildings: new Uint8Array(this.gridWidth * this.gridHeight)
                 };
-
-                // Create optimized tile layers
-                Object.keys(this.layers).forEach(key => {
-                    const layer = this.layers[key];
-                    layer.leafletLayer = L.tileLayer(layer.url, {
-                        opacity: layer.opacity,
-                        maxZoom: 18,
-                        minZoom: 8,
-                        tms: true,
-                        updateWhenIdle: true,
-                        keepBuffer: 4,
-                        errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
-                    });
-                });
-            }
-
-            activateLayer(layerKey) {
-                // Show loading state
-                this.setLayerLoading(layerKey, true);
-
-                // Deactivate previous layer
-                if (this.activeLayer && this.activeLayer !== layerKey) {
-                    const prevLayer = this.layers[this.activeLayer];
-                    if (prevLayer?.leafletLayer) {
-                        this.map.removeLayer(prevLayer.leafletLayer);
-                    }
-                    this.setLayerActive(this.activeLayer, false);
-                    this.stopAnimations();
-                }
-
-                // Activate new layer
-                this.activeLayer = layerKey;
-                const layer = this.layers[layerKey];
                 
-                if (layer?.leafletLayer) {
-                    this.map.addLayer(layer.leafletLayer);
-                }
-
-                this.setLayerActive(layerKey, true);
-                this.setLayerLoading(layerKey, false);
-                this.updateLegend(layer);
-                this.updateStats(layerKey);
-
-                // Start animations if needed
-                if (layer?.hasAnimation) {
-                    this.startAnimations(layerKey);
-                }
-            }
-
-            setLayerActive(layerKey, active) {
-                const btn = document.querySelector(`[data-layer="${layerKey}"]`);
-                if (btn) {
-                    btn.classList.toggle('active', active);
-                }
-            }
-
-            setLayerLoading(layerKey, loading) {
-                const btn = document.querySelector(`[data-layer="${layerKey}"]`);
-                if (btn) {
-                    btn.classList.toggle('loading', loading);
-                }
-            }
-
-            createCategoryLegend() {
-                return `
-                    <div class="legend-title">Pokrycie terenu</div>
-                    <div style="font-size: 0.8rem; line-height: 1.4;">
-                        <div>🏗️ Nawierzchnie</div>
-                        <div>🏢 Budynki</div>
-                        <div>🌳 Drzewa/Lasy</div>
-                        <div>🌱 Trawa</div>
-                        <div>🟤 Gleba</div>
-                        <div>💧 Woda</div>
-                    </div>
-                `;
-            }
-
-            createGradientLegend(title, min, max, colorScheme) {
-                const gradients = {
-                    viridis: 'linear-gradient(to right, #440154, #414487, #2a788e, #22a884, #7ad151, #fde725)',
-                    greens: 'linear-gradient(to right, #f7fcf5, #e5f5e0, #c7e9c0, #a1d99b, #74c476, #41ab5d, #238b45, #006d2c)',
-                    terrain: 'linear-gradient(to right, #2166ac, #5aae61, #a6d96a, #e6f598, #ffffbf, #fee08b, #fdae61, #f46d43, #d73027)',
-                    blues: 'linear-gradient(to right, #f7fbff, #deebf7, #c6dbef, #9ecae1, #6baed6, #4292c6, #2171b5, #08519c)',
-                    plasma: 'linear-gradient(to right, #0d0887, #5d01a6, #9c179e, #cc4778, #ed7953, #fdb32f, #fcffa4)',
-                    rdylbu: 'linear-gradient(to right, #a50026, #d73027, #f46d43, #fdae61, #fee090, #ffffbf, #e0f3f8, #abd9e9, #74add1, #4575b4, #313695)'
-                };
-
-                return `
-                    <div class="legend-title">${title}</div>
-                    <div class="gradient-bar" style="background: ${gradients[colorScheme] || gradients.viridis};"></div>
-                    <div class="gradient-labels">
-                        <span>${min}</span>
-                        <span>${((min + max) / 2).toFixed(1)}</span>
-                        <span>${max}</span>
-                    </div>
-                `;
-            }
-
-            updateLegend(layer) {
-                const legend = document.getElementById('legend');
-                const content = document.getElementById('legend-content');
-
-                if (layer?.legend) {
-                    content.innerHTML = layer.legend;
-                    legend.classList.remove('hidden');
-                } else {
-                    legend.classList.add('hidden');
-                }
-            }
-
-            updateStats(layerKey) {
-                // Mock stats - in real app would fetch from data
-                const stats = {
-                    landcover: { min: '1', max: '7', avg: '3.2', cover: '85%' },
-                    buildings: { min: '3m', max: '48m', avg: '12m', cover: '18%' },
-                    canopy: { min: '4m', max: '42m', avg: '19m', cover: '34%' },
-                    nmt: { min: '12m', max: '89m', avg: '45m', cover: '100%' },
-                    flood: { min: '0m', max: '1.8m', avg: '0.3m', cover: '12%' },
-                    wind: { min: '0m/s', max: '18m/s', avg: '7m/s', cover: '100%' },
-                    comfort: { min: '15°C', max: '41°C', avg: '28°C', cover: '100%' }
-                };
-
-                const layerStats = stats[layerKey] || { min: '-', max: '-', avg: '-', cover: '-' };
+                const rad = this.windDirection * Math.PI / 180;
+                const baseU = Math.sin(rad) * this.windSpeed;
+                const baseV = Math.cos(rad) * this.windSpeed;
                 
-                document.getElementById('stat-min').textContent = layerStats.min;
-                document.getElementById('stat-max').textContent = layerStats.max;
-                document.getElementById('stat-avg').textContent = layerStats.avg;
-                document.getElementById('stat-cover').textContent = layerStats.cover;
-            }
-
-            startAnimations(layerKey) {
-                if (layerKey === 'wind') {
-                    this.startWindAnimation();
-                } else if (layerKey === 'flood') {
-                    this.startRainAnimation();
-                }
-            }
-
-            startWindAnimation() {
-                const animate = () => {
-                    this.createWindParticle();
-                    
-                    // Update existing particles
-                    this.particles = this.particles.filter(particle => {
-                        if (particle.element.parentNode) {
-                            const progress = (Date.now() - particle.startTime) / particle.duration;
-                            if (progress >= 1) {
-                                particle.element.remove();
-                                return false;
+                for (let y = 0; y < this.gridHeight; y++) {
+                    for (let x = 0; x < this.gridWidth; x++) {
+                        const idx = y * this.gridWidth + x;
+                        
+                        // Add building obstacles (synthetic)
+                        const buildingNoise = this.noise2D(x * 0.02, y * 0.02);
+                        const isBuilding = buildingNoise > 0.3 && 
+                                         x > 100 && x < 300 && 
+                                         y > 100 && y < 300;
+                        
+                        if (isBuilding) {
+                            this.velocityField.buildings[idx] = 1;
+                            this.velocityField.u[idx] = 0;
+                            this.velocityField.v[idx] = 0;
+                        } else {
+                            // Flow around buildings with turbulence
+                            let u = baseU;
+                            let v = baseV;
+                            
+                            // Check for upstream buildings
+                            const checkDist = 20;
+                            let wake = 0;
+                            
+                            for (let d = 1; d < checkDist; d++) {
+                                const checkX = Math.round(x - d * Math.sin(rad));
+                                const checkY = Math.round(y - d * Math.cos(rad));
+                                
+                                if (checkX >= 0 && checkX < this.gridWidth && 
+                                    checkY >= 0 && checkY < this.gridHeight) {
+                                    const checkIdx = checkY * this.gridWidth + checkX;
+                                    if (this.velocityField.buildings[checkIdx]) {
+                                        wake = Math.exp(-d * 0.1);
+                                        break;
+                                    }
+                                }
                             }
                             
-                            const x = particle.startX + particle.velocityX * progress;
-                            const y = particle.startY + particle.velocityY * progress;
-                            const opacity = Math.sin(progress * Math.PI) * 0.8;
-                            
-                            particle.element.style.transform = `translate(${x}px, ${y}px)`;
-                            particle.element.style.opacity = opacity;
-                            
-                            return true;
-                        }
-                        return false;
-                    });
-
-                    this.animationFrameId = requestAnimationFrame(animate);
-                };
-                
-                animate();
-            }
-
-            createWindParticle() {
-                if (this.particles.length > 100) return; // Limit particles
-
-                const mapContainer = this.map.getContainer();
-                const bounds = mapContainer.getBoundingClientRect();
-                
-                const particle = document.createElement('div');
-                particle.className = 'wind-particle';
-                
-                const startX = Math.random() * bounds.width;
-                const startY = Math.random() * bounds.height;
-                
-                // Use weather data for realistic direction
-                const windDir = (this.weatherData.wind_direction || 270) * Math.PI / 180;
-                const windSpeed = (this.weatherData.wind_speed || 5) * 10;
-                
-                const velocityX = Math.cos(windDir) * windSpeed;
-                const velocityY = Math.sin(windDir) * windSpeed;
-                
-                particle.style.left = startX + 'px';
-                particle.style.top = startY + 'px';
-                
-                mapContainer.appendChild(particle);
-                
-                this.particles.push({
-                    element: particle,
-                    startTime: Date.now(),
-                    duration: 3000 + Math.random() * 2000,
-                    startX,
-                    startY,
-                    velocityX,
-                    velocityY
-                });
-            }
-
-            startRainAnimation() {
-                const animate = () => {
-                    this.createRainDrop();
-                    
-                    this.particles = this.particles.filter(particle => {
-                        if (particle.element.parentNode) {
-                            const progress = (Date.now() - particle.startTime) / particle.duration;
-                            if (progress >= 1) {
-                                particle.element.remove();
-                                return false;
+                            // Apply wake turbulence
+                            if (wake > 0) {
+                                const turbulence = Math.sin(x * 0.5 + y * 0.3) * wake;
+                                u *= (1 - wake * 0.7);
+                                v *= (1 - wake * 0.7);
+                                u += turbulence * 2;
+                                v += Math.cos(x * 0.4) * turbulence;
                             }
                             
-                            const y = particle.startY + particle.velocityY * progress;
-                            particle.element.style.transform = `translateY(${y}px)`;
-                            particle.element.style.opacity = 1 - progress;
+                            // Add general turbulence
+                            u += this.noise2D(x * 0.05, y * 0.05) * 2;
+                            v += this.noise2D(x * 0.05 + 100, y * 0.05) * 2;
                             
-                            return true;
+                            this.velocityField.u[idx] = u;
+                            this.velocityField.v[idx] = v;
                         }
-                        return false;
-                    });
-
-                    this.animationFrameId = requestAnimationFrame(animate);
-                };
-                
-                animate();
-            }
-
-            createRainDrop() {
-                if (this.particles.length > 150) return;
-
-                const mapContainer = this.map.getContainer();
-                const bounds = mapContainer.getBoundingClientRect();
-                
-                const drop = document.createElement('div');
-                drop.className = 'rain-drop';
-                
-                const startX = Math.random() * bounds.width;
-                const startY = -20;
-                const velocityY = bounds.height + 40;
-                
-                drop.style.left = startX + 'px';
-                drop.style.top = startY + 'px';
-                
-                mapContainer.appendChild(drop);
-                
-                this.particles.push({
-                    element: drop,
-                    startTime: Date.now(),
-                    duration: 1500 + Math.random() * 500,
-                    startY,
-                    velocityY
-                });
-            }
-
-            stopAnimations() {
-                if (this.animationFrameId) {
-                    cancelAnimationFrame(this.animationFrameId);
-                    this.animationFrameId = null;
+                    }
                 }
                 
-                this.particles.forEach(particle => {
-                    if (particle.element.parentNode) {
-                        particle.element.remove();
+                // Smooth the field (Gaussian blur for realism)
+                this.smoothField();
+            }
+            
+            smoothField() {
+                const kernel = [0.0625, 0.125, 0.0625, 0.125, 0.25, 0.125, 0.0625, 0.125, 0.0625];
+                const tempU = new Float32Array(this.velocityField.u);
+                const tempV = new Float32Array(this.velocityField.v);
+                
+                for (let y = 1; y < this.gridHeight - 1; y++) {
+                    for (let x = 1; x < this.gridWidth - 1; x++) {
+                        const idx = y * this.gridWidth + x;
+                        if (this.velocityField.buildings[idx]) continue;
+                        
+                        let sumU = 0, sumV = 0, k = 0;
+                        for (let dy = -1; dy <= 1; dy++) {
+                            for (let dx = -1; dx <= 1; dx++) {
+                                const nIdx = (y + dy) * this.gridWidth + (x + dx);
+                                if (!this.velocityField.buildings[nIdx]) {
+                                    sumU += tempU[nIdx] * kernel[k];
+                                    sumV += tempV[nIdx] * kernel[k];
+                                }
+                                k++;
+                            }
+                        }
+                        
+                        this.velocityField.u[idx] = sumU;
+                        this.velocityField.v[idx] = sumV;
                     }
-                });
+                }
+            }
+            
+            async loadTerrainData() {
+                // Load DEM/DSM data
+                // In production: load actual NMT/NMPT rasters
+                this.terrainData = new Float32Array(this.gridWidth * this.gridHeight);
+                
+                for (let i = 0; i < this.terrainData.length; i++) {
+                    this.terrainData[i] = Math.sin(i * 0.001) * 10 + 50;
+                }
+            }
+            
+            initParticles() {
                 this.particles = [];
-            }
-
-            toggleSandbox() {
-                this.sandboxMode = !this.sandboxMode;
-                const panel = document.getElementById('sandbox-panel');
-                const btn = document.querySelector('[data-layer="sandbox"]');
-                
-                panel.classList.toggle('active', this.sandboxMode);
-                btn.classList.toggle('active', this.sandboxMode);
-                
-                if (this.sandboxMode) {
-                    this.map.getContainer().style.cursor = 'crosshair';
-                } else {
-                    this.map.getContainer().style.cursor = '';
-                    this.sandboxTool = null;
+                for (let i = 0; i < this.particleCount; i++) {
+                    this.particles.push(this.createParticle());
                 }
             }
-
-            selectTool(tool) {
-                this.sandboxTool = tool;
-                document.querySelectorAll('.tool-btn').forEach(btn => {
-                    btn.classList.toggle('active', btn.dataset.tool === tool);
+            
+            createParticle() {
+                return {
+                    x: Math.random() * this.gridWidth,
+                    y: Math.random() * this.gridHeight,
+                    age: 0,
+                    maxAge: 100 + Math.random() * 100,
+                    path: []
+                };
+            }
+            
+            updateParticle(particle) {
+                const gridX = Math.floor(particle.x);
+                const gridY = Math.floor(particle.y);
+                
+                if (gridX < 0 || gridX >= this.gridWidth - 1 || 
+                    gridY < 0 || gridY >= this.gridHeight - 1) {
+                    return this.createParticle();
+                }
+                
+                // Bilinear interpolation for smooth movement
+                const fx = particle.x - gridX;
+                const fy = particle.y - gridY;
+                
+                const idx00 = gridY * this.gridWidth + gridX;
+                const idx10 = gridY * this.gridWidth + gridX + 1;
+                const idx01 = (gridY + 1) * this.gridWidth + gridX;
+                const idx11 = (gridY + 1) * this.gridWidth + gridX + 1;
+                
+                const u = (1 - fx) * (1 - fy) * this.velocityField.u[idx00] +
+                         fx * (1 - fy) * this.velocityField.u[idx10] +
+                         (1 - fx) * fy * this.velocityField.u[idx01] +
+                         fx * fy * this.velocityField.u[idx11];
+                         
+                const v = (1 - fx) * (1 - fy) * this.velocityField.v[idx00] +
+                         fx * (1 - fy) * this.velocityField.v[idx10] +
+                         (1 - fx) * fy * this.velocityField.v[idx01] +
+                         fx * fy * this.velocityField.v[idx11];
+                
+                // Check for building collision
+                if (this.velocityField.buildings[idx00]) {
+                    return this.createParticle();
+                }
+                
+                // Update position
+                particle.x += u * this.particleSpeed * 0.1;
+                particle.y += v * this.particleSpeed * 0.1;
+                
+                // Store path for trail effect
+                particle.path.push({x: particle.x * this.scaleX, y: particle.y * this.scaleY});
+                if (particle.path.length > 10) {
+                    particle.path.shift();
+                }
+                
+                particle.age++;
+                
+                if (particle.age > particle.maxAge) {
+                    return this.createParticle();
+                }
+                
+                return particle;
+            }
+            
+            drawParticle(particle) {
+                if (particle.path.length < 2) return;
+                
+                const speed = Math.sqrt(
+                    Math.pow(particle.path[particle.path.length - 1].x - particle.path[0].x, 2) +
+                    Math.pow(particle.path[particle.path.length - 1].y - particle.path[0].y, 2)
+                );
+                
+                // Color based on speed
+                const hue = this.colorMode === 'flow' ? 
+                    200 - speed * 2 : // Blue to green
+                    this.colorMode === 'pressure' ?
+                    280 - speed * 3 : // Purple gradient
+                    60 + speed * 2; // Yellow to red for vorticity
+                    
+                const saturation = 70 + speed;
+                const lightness = 50 + speed * 0.5;
+                const alpha = (1 - particle.age / particle.maxAge) * 0.8;
+                
+                this.ctx.strokeStyle = `hsla(${hue}, ${saturation}%, ${lightness}%, ${alpha})`;
+                this.ctx.lineWidth = this.lineWidth;
+                this.ctx.beginPath();
+                
+                for (let i = 0; i < particle.path.length; i++) {
+                    const point = particle.path[i];
+                    if (i === 0) {
+                        this.ctx.moveTo(point.x, point.y);
+                    } else {
+                        this.ctx.lineTo(point.x, point.y);
+                    }
+                }
+                
+                this.ctx.stroke();
+            }
+            
+            drawBuildings() {
+                this.ctx.fillStyle = 'rgba(20, 20, 30, 0.6)';
+                
+                for (let y = 0; y < this.gridHeight; y++) {
+                    for (let x = 0; x < this.gridWidth; x++) {
+                        const idx = y * this.gridWidth + x;
+                        if (this.velocityField.buildings[idx]) {
+                            this.ctx.fillRect(
+                                x * this.scaleX,
+                                y * this.scaleY,
+                                this.scaleX,
+                                this.scaleY
+                            );
+                        }
+                    }
+                }
+            }
+            
+            animate() {
+                // Fade effect
+                this.ctx.fillStyle = `rgba(0, 0, 0, ${1 - this.fadeOpacity})`;
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                // Update and draw particles
+                for (let i = 0; i < this.particles.length; i++) {
+                    this.particles[i] = this.updateParticle(this.particles[i]);
+                    this.drawParticle(this.particles[i]);
+                }
+                
+                // Draw buildings overlay
+                if (document.querySelector('[data-layer="buildings"].active')) {
+                    this.drawBuildings();
+                }
+                
+                // Update stats
+                this.updateStats();
+                
+                requestAnimationFrame(() => this.animate());
+            }
+            
+            updateStats() {
+                this.frameCount++;
+                const now = performance.now();
+                if (now - this.lastTime > 1000) {
+                    this.fps = this.frameCount;
+                    this.frameCount = 0;
+                    this.lastTime = now;
+                    
+                    document.getElementById('fps').textContent = this.fps;
+                    document.getElementById('activeParticles').textContent = this.particles.length;
+                    
+                    // Calculate max velocity
+                    let maxV = 0;
+                    for (let i = 0; i < this.velocityField.u.length; i++) {
+                        const v = Math.sqrt(
+                            this.velocityField.u[i] ** 2 + 
+                            this.velocityField.v[i] ** 2
+                        );
+                        maxV = Math.max(maxV, v);
+                    }
+                    document.getElementById('maxVelocity').textContent = maxV.toFixed(1);
+                }
+            }
+            
+            setupControls() {
+                // Wind speed
+                document.getElementById('windSpeed').addEventListener('input', (e) => {
+                    this.windSpeed = parseFloat(e.target.value);
+                    document.getElementById('windSpeedValue').textContent = `${this.windSpeed} m/s`;
+                    this.generateSyntheticField();
+                });
+                
+                // Wind direction
+                document.getElementById('windDirection').addEventListener('input', (e) => {
+                    this.windDirection = parseFloat(e.target.value);
+                    document.getElementById('windDirectionValue').textContent = `${this.windDirection}°`;
+                    this.generateSyntheticField();
+                });
+                
+                // Particle count
+                document.getElementById('particleCount').addEventListener('input', (e) => {
+                    const newCount = parseInt(e.target.value);
+                    document.getElementById('particleCountValue').textContent = newCount;
+                    
+                    if (newCount > this.particleCount) {
+                        for (let i = this.particleCount; i < newCount; i++) {
+                            this.particles.push(this.createParticle());
+                        }
+                    } else {
+                        this.particles.splice(newCount);
+                    }
+                    this.particleCount = newCount;
+                });
+                
+                // Particle speed
+                document.getElementById('particleSpeed').addEventListener('input', (e) => {
+                    this.particleSpeed = parseFloat(e.target.value);
+                });
+                
+                // Visualization modes
+                document.querySelectorAll('[data-mode]').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        document.querySelectorAll('[data-mode]').forEach(b => b.classList.remove('active'));
+                        e.target.classList.add('active');
+                        this.colorMode = e.target.dataset.mode;
+                    });
+                });
+                
+                // Layer toggles
+                document.querySelectorAll('[data-layer]').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        e.target.classList.toggle('active');
+                    });
                 });
             }
-
-            handleMapClick(e) {
-                if (this.sandboxMode && this.sandboxTool) {
-                    this.applySandboxTool(e.latlng);
-                }
+            
+            // Simplex noise for realistic turbulence
+            noise2D(x, y) {
+                // Simplified Perlin noise
+                const X = Math.floor(x) & 255;
+                const Y = Math.floor(y) & 255;
+                x -= Math.floor(x);
+                y -= Math.floor(y);
+                const u = this.fade(x);
+                const v = this.fade(y);
+                const A = this.p[X] + Y;
+                const B = this.p[X + 1] + Y;
+                return this.lerp(v,
+                    this.lerp(u, this.grad2(this.p[A], x, y), this.grad2(this.p[B], x - 1, y)),
+                    this.lerp(u, this.grad2(this.p[A + 1], x, y - 1), this.grad2(this.p[B + 1], x - 1, y - 1))
+                );
             }
-
-            applySandboxTool(latlng) {
-                const height = document.getElementById('height-slider').value;
-                
-                const modification = {
-                    tool: this.sandboxTool,
-                    latlng: latlng,
-                    height: parseInt(height),
-                    timestamp: Date.now()
-                };
-                
-                this.modifications.push(modification);
-                
-                // Visual feedback
-                this.showModificationPreview(modification);
-                
-                // Trigger recalculation (debounced)
-                this.debounce(this.recalculateSimulations.bind(this), 1000)();
+            
+            fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+            lerp(t, a, b) { return a + t * (b - a); }
+            grad2(hash, x, y) {
+                const h = hash & 3;
+                const u = h < 2 ? x : y;
+                const v = h < 2 ? y : x;
+                return ((h & 1) === 0 ? u : -u) + ((h & 2) === 0 ? v : -v);
             }
-
-            showModificationPreview(modification) {
-                const icon = {
-                    building: '🏢',
-                    tree: '🌳',
-                    terrain: '⛰️',
-                    erase: '❌'
-                }[modification.tool];
-                
-                const marker = L.marker(modification.latlng, {
-                    icon: L.divIcon({
-                        html: `<div style="font-size: 20px;">${icon}</div>`,
-                        className: 'sandbox-marker',
-                        iconSize: [30, 30]
-                    })
-                }).addTo(this.map);
-                
-                // Store reference for cleanup
-                modification.marker = marker;
-            }
-
-            async recalculateSimulations() {
-                if (this.modifications.length === 0) return;
-                
-                this.showLoading(true);
-                
-                try {
-                    // Simulate API call to recalculate
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                    
-                    // Update active layer
-                    if (this.activeLayer) {
-                        this.activateLayer(this.activeLayer);
-                    }
-                    
-                    console.log('Simulations recalculated with', this.modifications.length, 'modifications');
-                } catch (error) {
-                    console.error('Recalculation failed:', error);
-                } finally {
-                    this.showLoading(false);
-                }
-            }
-
-            showLoading(show) {
-                const overlay = document.getElementById('loading-overlay');
-                overlay.style.display = show ? 'flex' : 'none';
-                this.isLoading = show;
-            }
-
-            startPerformanceMonitoring() {
-                setInterval(() => {
-                    const memory = performance.memory;
-                    if (memory) {
-                        const usedMB = memory.usedJSHeapSize / 1024 / 1024;
-                        if (usedMB > 200) { // 200MB threshold
-                            console.warn('High memory usage:', usedMB.toFixed(1), 'MB');
-                            this.cleanup();
-                        }
-                    }
-                }, 10000);
-            }
-
-            cleanup() {
-                // Clear tile cache if too large
-                if (this.tileCache.size > 1000) {
-                    this.tileCache.clear();
-                }
-                
-                // Clean up particles
-                if (this.particles.length > 50) {
-                    this.particles.splice(0, this.particles.length - 50).forEach(particle => {
-                        if (particle.element.parentNode) {
-                            particle.element.remove();
-                        }
-                    });
+            
+            p = new Uint8Array(512);
+            
+            constructor() {
+                super();
+                // Initialize permutation table
+                for (let i = 0; i < 256; i++) {
+                    this.p[i] = this.p[i + 256] = Math.floor(Math.random() * 256);
                 }
             }
         }
-
-        // Initialize app when DOM loaded
-        document.addEventListener('DOMContentLoaded', () => {
-            window.gisApp = new OptimizedGISApp();
+        
+        // Initialize on load
+        window.addEventListener('DOMContentLoaded', () => {
+            new WindFlowVisualization();
         });
     </script>
 </body>
