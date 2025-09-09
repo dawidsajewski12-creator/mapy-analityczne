@@ -1,13 +1,11 @@
 <!DOCTYPE html>
 <html lang="pl">
 <head>
-    <title>Mapy Analityczne</title>
+    <title>Mapy Analityczne - Pokrycie Terenu</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/geotiff@2.0.7/dist-browser/geotiff.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/leaflet-velocity-ts@1.1.0/dist/leaflet-velocity.js"></script>
     <style>
         html, body, #map { 
             height: 100%; 
@@ -74,35 +72,6 @@
             box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
         }
         
-        .legend .gradient {
-            width: 100%;
-            height: 20px;
-            margin: 8px 0;
-            border-radius: 10px;
-            border: 1px solid rgba(0,0,0,0.1);
-            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
-        }
-        
-        .legend .labels {
-            display: flex;
-            justify-content: space-between;
-            font-size: 11px;
-            color: #64748b;
-            font-weight: 500;
-        }
-        
-        .weather-info {
-            background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(147, 51, 234, 0.1));
-            border: 1px solid rgba(59, 130, 246, 0.2);
-            padding: 8px 12px;
-            margin-top: 8px;
-            border-radius: 8px;
-            font-size: 12px;
-            text-align: center;
-            color: #1e40af;
-            font-weight: 500;
-        }
-        
         .leaflet-popup-content-wrapper {
             border-radius: 12px;
             background: rgba(255,255,255,0.95);
@@ -110,7 +79,6 @@
             border: 1px solid rgba(255,255,255,0.18);
         }
         
-        /* Animacje */
         .legend, .leaflet-control-layers {
             animation: fadeInScale 0.3s ease-out;
         }
@@ -125,17 +93,6 @@
                 transform: scale(1);
             }
         }
-        
-        .leaflet-control-layers-expanded {
-            animation: expandLayers 0.2s ease-out;
-        }
-        
-        @keyframes expandLayers {
-            from {
-                opacity: 0;
-                transform: scale(0.95);
-            }
-        }
     </style>
 </head>
 <body>
@@ -145,7 +102,6 @@
         zoomControl: false
     }).setView([54.16, 19.40], 13);
     
-    // Dodaj kontrolki z lepszą pozycją
     L.control.zoom({
         position: 'topright'
     }).addTo(map);
@@ -156,31 +112,8 @@
         maxZoom: 19
     }).addTo(map);
 
-    let velocityLayer = null;
-    let activeLayer = null;
-
     const overlayLayers = {
         "🏗️ Pokrycie terenu": L.tileLayer('./wyniki/kafelki/landcover/{z}/{x}/{y}.png', { 
-            tms: true, 
-            opacity: 0.8 
-        }),
-        "🌳 Korony drzew": L.tileLayer('./wyniki/kafelki/korony_drzew/{z}/{x}/{y}.png', { 
-            tms: true, 
-            opacity: 0.85 
-        }),
-        "⛰️ Model Terenu (NMT)": L.tileLayer('./wyniki/kafelki/nmt/{z}/{x}/{y}.png', { 
-            tms: true, 
-            opacity: 0.8 
-        }),
-        "🌊 Zasięg podtopień": L.tileLayer('./wyniki/kafelki/podtopienia/{z}/{x}/{y}.png', { 
-            tms: true, 
-            opacity: 0.7 
-        }),
-        "💨 Prędkość wiatru": L.tileLayer('./wyniki/kafelki/wiatr/{z}/{x}/{y}.png', { 
-            tms: true, 
-            opacity: 0.6 
-        }),
-        "🌡️ Komfort termiczny": L.tileLayer('./wyniki/kafelki/komfort/{z}/{x}/{y}.png', { 
             tms: true, 
             opacity: 0.8 
         })
@@ -198,201 +131,48 @@
     };
     legendControl.addTo(map);
 
-    function createGradientLegend(title, min, max, gradientCss, weatherData = null) {
+    function createLandcoverLegend() {
         const div = L.DomUtil.create("div", "legend");
-        let weatherInfo = '';
-        if (weatherData) {
-            if (title.includes('wiatr')) {
-                weatherInfo = `<div class="weather-info">🌪️ Bazowy: ${weatherData.wind_speed.toFixed(1)} m/s, ${weatherData.wind_direction.toFixed(0)}°</div>`;
-            } else if (title.includes('termiczny')) {
-                weatherInfo = `<div class="weather-info">🌡️ Temperatura: ${weatherData.temperature.toFixed(1)}°C | 💧 Wilgotność: ${weatherData.humidity}%</div>`;
-            }
+        const items = {
+            'Nawierzchnie utwardzone': 'linear-gradient(45deg, #a9a9a9, #808080)',
+            'Budynki': 'linear-gradient(45deg, #dc143c, #b91c3c)',
+            'Drzewa / Lasy': 'linear-gradient(45deg, #228b22, #166b16)',
+            'Trawa / Tereny zielone': 'linear-gradient(45deg, #7cfc00, #65d000)',
+            'Gleba / Nieużytki': 'linear-gradient(45deg, #d2b48c, #c19a6b)',
+            'Woda': 'linear-gradient(45deg, #1e90ff, #0066cc)'
+        };
+        let labels = '<div class="title">Pokrycie terenu</div>';
+        for (const [key, gradient] of Object.entries(items)) {
+            labels += `<div style="margin-bottom: 8px;"><i style="background:${gradient}"></i>${key}</div>`;
         }
-        
-        div.innerHTML = `
-            <div class="title">${title}</div>
-            <div class="gradient" style="background: ${gradientCss};"></div>
-            <div class="labels">
-                <span>${min}</span>
-                <span>${((min + max) / 2).toFixed(1)}</span>
-                <span>${max}</span>
-            </div>
-            ${weatherInfo}
-        `;
+        div.innerHTML = labels;
         return div;
     }
 
-    const legends = {
-        "🏗️ Pokrycie terenu": () => {
-            const div = L.DomUtil.create("div", "legend");
-            const items = {
-                'Nawierzchnie utwardzone': 'linear-gradient(45deg, #a9a9a9, #808080)',
-                'Budynki': 'linear-gradient(45deg, #dc143c, #b91c3c)',
-                'Drzewa / Lasy': 'linear-gradient(45deg, #228b22, #166b16)',
-                'Trawa / Tereny zielone': 'linear-gradient(45deg, #7cfc00, #65d000)',
-                'Gleba / Nieużytki': 'linear-gradient(45deg, #d2b48c, #c19a6b)',
-                'Woda': 'linear-gradient(45deg, #1e90ff, #0066cc)'
-            };
-            let labels = '<div class="title">Pokrycie terenu</div>';
-            for (const [key, gradient] of Object.entries(items)) {
-                labels += `<div style="margin-bottom: 8px;"><i style="background:${gradient}"></i>${key}</div>`;
-            }
-            div.innerHTML = labels;
-            return div;
-        },
-        "🌳 Korony drzew": (weatherData) => createGradientLegend(
-            "Wysokość drzew [m]", 4, 40, 
-            "linear-gradient(to right, #ffffcc, #c2e699, #78c679, #31a354, #006837)"
-        ),
-        "⛰️ Model Terenu (NMT)": (weatherData) => createGradientLegend(
-            "Wysokość n.p.m.", 5, 95, 
-            "linear-gradient(to right, #2166ac, #5aae61, #a6d96a, #e6f598, #ffffbf, #fee08b, #fdae61, #f46d43, #d73027)"
-        ),
-        "🌊 Zasięg podtopień": (weatherData) => createGradientLegend(
-            "Głębokość wody [m]", 0.01, 1.5, 
-            "linear-gradient(to right, #deebf7, #9ecae1, #6baed6, #4292c6, #2171b5, #08519c)"
-        ),
-        "💨 Prędkość wiatru": (weatherData) => createGradientLegend(
-            "Prędkość wiatru [m/s]", 0, (weatherData.wind_speed * 1.5).toFixed(1), 
-            "linear-gradient(to right, #fde725, #7ad151, #22a884, #2a788e, #414487, #440154)",
-            weatherData
-        ),
-        "🌡️ Komfort termiczny": (weatherData) => createGradientLegend(
-            "UTCI [°C]", 9, 38, 
-            "linear-gradient(to right, #053061, #4575b4, #74add1, #abd9e9, #e0f3f8, #ffffbf, #fee090, #fdae61, #f46d43, #d73027, #a50026)",
-            weatherData
-        )
-    };
-    
-    let currentWeatherData = { temperature: 25, wind_speed: 5, wind_direction: 270, humidity: 50 };
-    
-    // Pobierz aktualne dane pogodowe
-    fetch(`https://api.open-meteo.com/v1/forecast?latitude=54.16&longitude=19.40&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m&timezone=Europe/Warsaw`)
-        .then(response => response.json())
-        .then(data => {
-            if (data.current) {
-                currentWeatherData = {
-                    temperature: data.current.temperature_2m,
-                    humidity: data.current.relative_humidity_2m,
-                    wind_speed: data.current.wind_speed_10m / 3.6,
-                    wind_direction: data.current.wind_direction_10m
-                };
-                console.log('Pobrano dane pogodowe:', currentWeatherData);
-                // Odśwież legendę jeśli jakaś warstwa jest aktywna
-                if (activeLayer && legends[activeLayer]) {
-                    updateLegend(activeLayer, currentWeatherData);
-                }
-            }
-        })
-        .catch(error => {
-            console.warn('Błąd pobierania danych pogodowych:', error);
-        });
-
     map.on('overlayadd', (e) => {
-        activeLayer = e.name;
-        updateLegend(e.name, currentWeatherData);
-        
-        if (e.name === "💨 Prędkość wiatru") {
-            loadAndDisplayVelocity();
+        if (e.name === "🏗️ Pokrycie terenu") {
+            updateLegend(true);
         }
     });
 
     map.on('overlayremove', (e) => {
-        if (activeLayer === e.name) {
-            activeLayer = null;
-            updateLegend(null);
-        }
-        
-        if (e.name === "💨 Prędkość wiatru" && velocityLayer) {
-            map.removeLayer(velocityLayer);
-            velocityLayer = null;
+        if (e.name === "🏗️ Pokrycie terenu") {
+            updateLegend(false);
         }
     });
     
-    function updateLegend(layerName, weatherData) {
+    function updateLegend(show) {
         const placeholder = document.querySelector('.legend-placeholder');
         placeholder.innerHTML = "";
-        if (layerName && legends[layerName]) {
-            const legendDiv = legends[layerName](weatherData);
+        if (show) {
+            const legendDiv = createLandcoverLegend();
             placeholder.appendChild(legendDiv);
-        }
-    }
-
-    async function loadAndDisplayVelocity() {
-        try {
-            if (velocityLayer) {
-                map.removeLayer(velocityLayer);
-                velocityLayer = null;
-            }
-            
-            const [speedTiff, dirTiff] = await Promise.all([
-                GeoTIFF.fromUrl('./wyniki/rastry/predkosc_wiatru.tif'),
-                GeoTIFF.fromUrl('./wyniki/rastry/kierunek_wiatru.tif')
-            ]);
-            
-            const speedImage = await speedTiff.getImage();
-            const dirImage = await dirTiff.getImage();
-            
-            const speedData = (await speedImage.readRasters())[0];
-            const dirData = (await dirImage.readRasters())[0];
-            const bbox = speedImage.getBoundingBox();
-
-            // Konwersja kierunku z stopni na składowe U/V
-            const uData = new Float32Array(speedData.length);
-            const vData = new Float32Array(speedData.length);
-            
-            for (let i = 0; i < speedData.length; i++) {
-                const speed = speedData[i];
-                const direction = dirData[i] * Math.PI / 180; // stopnie na radiany
-                uData[i] = -speed * Math.sin(direction); // składowa wschód-zachód
-                vData[i] = -speed * Math.cos(direction); // składowa północ-południe
-            }
-
-            velocityLayer = L.velocityLayer({
-                displayValues: true,
-                displayOptions: {
-                    velocityType: "Wiatr",
-                    position: "bottomleft",
-                    emptyString: "Brak danych",
-                    angleConvention: "meteo",
-                    speedUnit: "m/s",
-                    displayPosition: 'bottomleft'
-                },
-                data: {
-                    grid: {
-                        dx: Math.abs(speedImage.getResolution()[0]),
-                        dy: Math.abs(speedImage.getResolution()[1]),
-                        nx: speedImage.getWidth(),
-                        ny: speedImage.getHeight(),
-                        la1: bbox[3], // północ
-                        lo1: bbox[0], // zachód
-                        la2: bbox[1], // południe
-                        lo2: bbox[2]  // wschód
-                    },
-                    u: Array.from(uData),
-                    v: Array.from(vData)
-                },
-                minVelocity: 0,
-                maxVelocity: currentWeatherData.wind_speed * 1.8,
-                velocityScale: 0.005,
-                opacity: 0.8,
-                particleAge: 90,
-                lineWidth: 2,
-                particleMultiplier: 0.005
-            });
-            
-            velocityLayer.addTo(map);
-            console.log('Warstwa wiatru załadowana pomyślnie');
-            
-        } catch (error) {
-            console.error('Błąd ładowania warstwy wiatru:', error);
         }
     }
     
     // Domyślnie włącz pokrycie terenu
     overlayLayers["🏗️ Pokrycie terenu"].addTo(map);
-    activeLayer = "🏗️ Pokrycie terenu";
-    updateLegend("🏗️ Pokrycie terenu", currentWeatherData);
+    updateLegend(true);
 </script>
 </body>
 </html>
