@@ -3,6 +3,7 @@ import os
 import json
 import numpy as np
 import rasterio
+from rasterio.warp import reproject, Resampling
 import scipy.ndimage as ndimage
 from scipy.ndimage import zoom
 import matplotlib.pyplot as plt
