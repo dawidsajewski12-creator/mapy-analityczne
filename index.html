@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="pl">
 <head>
-    <title>Mapy Analityczne - Pokrycie Terenu + NMT + NMPT</title>
+    <title>Mapy Analityczne - Pokrycie Terenu + NMT + NMPT + Budynki</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
@@ -132,6 +132,10 @@
             tms: true, 
             opacity: 0.8 
         }),
+        "🏢 Budynki (wysokość)": L.tileLayer('./wyniki/kafelki/buildings/{z}/{x}/{y}.png', { 
+            tms: true, 
+            opacity: 0.85 
+        }),
         "🏔️ NMT (Model Terenu)": L.tileLayer('./wyniki/kafelki/nmt/{z}/{x}/{y}.png', { 
             tms: true, 
             opacity: 0.7 
@@ -180,12 +184,14 @@
             gradient = 'linear-gradient(to right, #333447 0%, #3b6829 25%, #8b7c4c 50%, #d9d0a8 75%, #ffffff 100%)';
         } else if (colormap === 'viridis') {
             gradient = 'linear-gradient(to right, #440154 0%, #31688e 33%, #35b779 66%, #fde725 100%)';
+        } else if (colormap === 'hot') {
+            gradient = 'linear-gradient(to right, #0b0000 0%, #aa0000 25%, #ff5500 50%, #ffaa00 75%, #ffffff 100%)';
         }
         
         let html = `<div class="title">${title}</div>`;
         html += `<div class="gradient-bar" style="background: ${gradient};"></div>`;
         html += '<div class="gradient-labels"><span>Min</span><span>Max</span></div>';
-        html += '<div style="text-align: center; margin-top: 5px; font-size: 11px; color: #888;">Wysokość [m n.p.m.]</div>';
+        html += '<div style="text-align: center; margin-top: 5px; font-size: 11px; color: #888;">Wysokość [m]</div>';
         
         div.innerHTML = html;
         return div;
