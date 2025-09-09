@@ -207,11 +207,13 @@
         const placeholder = document.querySelector('.legend-placeholder');
         placeholder.innerHTML = "";
         
-        // Wyświetl tylko jedną legendę - priorytet: NMPT > NMT > Pokrycie
+        // Wyświetl tylko jedną legendę - priorytet: NMPT > NMT > Budynki > Pokrycie
         if (activeLayers.has("🏙️ NMPT (Model Pokrycia)")) {
             placeholder.appendChild(createElevationLegend("NMPT - Model Pokrycia", "viridis"));
         } else if (activeLayers.has("🏔️ NMT (Model Terenu)")) {
             placeholder.appendChild(createElevationLegend("NMT - Model Terenu", "terrain"));
+        } else if (activeLayers.has("🏢 Budynki (wysokość)")) {
+            placeholder.appendChild(createElevationLegend("Wysokość Budynków", "hot"));
         } else if (activeLayers.has("🏗️ Pokrycie terenu")) {
             placeholder.appendChild(createLandcoverLegend());
         }
