@@ -218,29 +218,7 @@
             }
             div.innerHTML = labels;
             return div;
-        },
-        "🌳 Korony drzew": (weatherData) => createGradientLegend(
-            "Wysokość drzew [m]", 4, 40, 
-            "linear-gradient(to right, #ffffcc, #c2e699, #78c679, #31a354, #006837)"
-        ),
-        "⛰️ Model Terenu (NMT)": (weatherData) => createGradientLegend(
-            "Wysokość n.p.m.", 5, 95, 
-            "linear-gradient(to right, #2166ac, #5aae61, #a6d96a, #e6f598, #ffffbf, #fee08b, #fdae61, #f46d43, #d73027)"
-        ),
-        "🌊 Zasięg podtopień": (weatherData) => createGradientLegend(
-            "Głębokość wody [m]", 0.01, 1.5, 
-            "linear-gradient(to right, #deebf7, #9ecae1, #6baed6, #4292c6, #2171b5, #08519c)"
-        ),
-        "💨 Prędkość wiatru": (weatherData) => createGradientLegend(
-            "Prędkość wiatru [m/s]", 0, (weatherData.wind_speed * 1.5).toFixed(1), 
-            "linear-gradient(to right, #fde725, #7ad151, #22a884, #2a788e, #414487, #440154)",
-            weatherData
-        ),
-        "🌡️ Komfort termiczny": (weatherData) => createGradientLegend(
-            "UTCI [°C]", 9, 38, 
-            "linear-gradient(to right, #053061, #4575b4, #74add1, #abd9e9, #e0f3f8, #ffffbf, #fee090, #fdae61, #f46d43, #d73027, #a50026)",
-            weatherData
-        )
+        }
     };
     
     let currentWeatherData = { temperature: 25, wind_speed: 5, wind_direction: 270, humidity: 50 };
@@ -375,4 +353,5 @@
 </script>
 </body>
 </html>
+
 
