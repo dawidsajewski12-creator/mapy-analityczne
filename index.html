@@ -1,617 +1,398 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pl">
 <head>
-    <meta charset="UTF-8">
+    <title>Mapy Analityczne</title>
+    <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Urban Wind Flow</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/geotiff@2.0.7/dist-browser/geotiff.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/leaflet-velocity-ts@1.1.0/dist/leaflet-velocity.js"></script>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        
-        body {
-            font-family: -apple-system, system-ui, sans-serif;
-            background: #000;
-            overflow: hidden;
+        html, body, #map { 
+            height: 100%; 
+            width: 100%; 
+            margin: 0; 
+            background: linear-gradient(135deg, #1e3c72, #2a5298); 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
         
-        #canvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-        }
-        
-        .controls {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            background: rgba(0,0,0,0.8);
+        .leaflet-control-layers {
+            background: rgba(255,255,255,0.95) !important;
             backdrop-filter: blur(10px);
-            border: 1px solid rgba(255,255,255,0.1);
-            padding: 20px;
-            border-radius: 12px;
-            color: #fff;
-            width: 280px;
-            z-index: 100;
-        }
-        
-        .control-group {
-            margin-bottom: 15px;
-        }
-        
-        .control-group label {
-            display: block;
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            opacity: 0.6;
-            margin-bottom: 5px;
-        }
-        
-        .slider {
-            width: 100%;
-            -webkit-appearance: none;
-            height: 2px;
-            background: rgba(255,255,255,0.1);
-            outline: none;
-        }
-        
-        .slider::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            width: 12px;
-            height: 12px;
-            background: #fff;
-            border-radius: 50%;
-            cursor: pointer;
-        }
-        
-        .stats {
-            position: absolute;
-            bottom: 20px;
-            left: 20px;
-            color: #fff;
-            font-size: 10px;
-            font-family: monospace;
-            background: rgba(0,0,0,0.5);
+            border-radius: 12px !important;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1) !important;
+            border: 1px solid rgba(255,255,255,0.18);
             padding: 10px;
-            border-radius: 4px;
+            font-size: 14px;
         }
         
-        .layer-toggle {
-            display: flex;
-            gap: 10px;
-            margin-top: 10px;
+        .leaflet-control-layers-toggle {
+            background-color: rgba(59, 130, 246, 0.9) !important;
+            border-radius: 8px;
         }
         
-        .layer-btn {
-            flex: 1;
-            padding: 8px;
-            background: rgba(255,255,255,0.1);
-            border: 1px solid rgba(255,255,255,0.2);
-            color: #fff;
-            font-size: 11px;
+        .leaflet-control-layers label {
+            color: #334155 !important;
+            font-weight: 500;
             cursor: pointer;
-            border-radius: 4px;
-            transition: all 0.2s;
+            transition: color 0.2s ease;
         }
         
-        .layer-btn.active {
-            background: rgba(255,255,255,0.3);
-            border-color: #fff;
+        .leaflet-control-layers label:hover {
+            color: #1e40af !important;
         }
         
-        #loading {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: #fff;
+        .legend {
+            background: rgba(255,255,255,0.95);
+            backdrop-filter: blur(10px);
+            padding: 15px;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            border: 1px solid rgba(255,255,255,0.18);
+            max-width: 300px;
+            font-size: 13px;
+        }
+        
+        .legend .title {
+            font-weight: 600;
+            margin-bottom: 10px;
+            text-align: center;
+            font-size: 16px;
+            color: #1e40af;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .legend i {
+            width: 18px;
+            height: 18px;
+            float: left;
+            margin-right: 10px;
+            border-radius: 3px;
+            border: 1px solid rgba(0,0,0,0.1);
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        .legend .gradient {
+            width: 100%;
+            height: 20px;
+            margin: 8px 0;
+            border-radius: 10px;
+            border: 1px solid rgba(0,0,0,0.1);
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        .legend .labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: #64748b;
+            font-weight: 500;
+        }
+        
+        .weather-info {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(147, 51, 234, 0.1));
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            padding: 8px 12px;
+            margin-top: 8px;
+            border-radius: 8px;
             font-size: 12px;
-            letter-spacing: 2px;
+            text-align: center;
+            color: #1e40af;
+            font-weight: 500;
+        }
+        
+        .leaflet-popup-content-wrapper {
+            border-radius: 12px;
+            background: rgba(255,255,255,0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.18);
+        }
+        
+        /* Animacje */
+        .legend, .leaflet-control-layers {
+            animation: fadeInScale 0.3s ease-out;
+        }
+        
+        @keyframes fadeInScale {
+            from {
+                opacity: 0;
+                transform: scale(0.9);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+        
+        .leaflet-control-layers-expanded {
+            animation: expandLayers 0.2s ease-out;
+        }
+        
+        @keyframes expandLayers {
+            from {
+                opacity: 0;
+                transform: scale(0.95);
+            }
         }
     </style>
 </head>
 <body>
-    <canvas id="canvas"></canvas>
+<div id="map"></div>
+<script>
+    const map = L.map('map', {
+        zoomControl: false
+    }).setView([54.16, 19.40], 13);
     
-    <div id="loading">LOADING VELOCITY FIELD...</div>
+    // Dodaj kontrolki z lepszą pozycją
+    L.control.zoom({
+        position: 'topright'
+    }).addTo(map);
     
-    <div class="controls">
-        <div class="control-group">
-            <label>Wind Speed</label>
-            <input type="range" class="slider" id="windSpeed" min="0" max="30" value="10" step="0.5">
-            <span id="windSpeedValue">10 m/s</span>
-        </div>
-        
-        <div class="control-group">
-            <label>Wind Direction</label>
-            <input type="range" class="slider" id="windDirection" min="0" max="360" value="270" step="5">
-            <span id="windDirectionValue">270°</span>
-        </div>
-        
-        <div class="control-group">
-            <label>Particle Count</label>
-            <input type="range" class="slider" id="particleCount" min="1000" max="50000" value="10000" step="1000">
-            <span id="particleCountValue">10000</span>
-        </div>
-        
-        <div class="control-group">
-            <label>Particle Speed</label>
-            <input type="range" class="slider" id="particleSpeed" min="0.1" max="5" value="1" step="0.1">
-        </div>
-        
-        <div class="control-group">
-            <label>Visualization</label>
-            <div class="layer-toggle">
-                <button class="layer-btn active" data-mode="flow">Flow</button>
-                <button class="layer-btn" data-mode="pressure">Pressure</button>
-                <button class="layer-btn" data-mode="vorticity">Vorticity</button>
-            </div>
-        </div>
-        
-        <div class="control-group">
-            <label>Layers</label>
-            <div class="layer-toggle">
-                <button class="layer-btn active" data-layer="buildings">Buildings</button>
-                <button class="layer-btn" data-layer="terrain">Terrain</button>
-            </div>
-        </div>
-    </div>
-    
-    <div class="stats">
-        <div>FPS: <span id="fps">60</span></div>
-        <div>Particles: <span id="activeParticles">0</span></div>
-        <div>Velocity: <span id="maxVelocity">0</span> m/s</div>
-    </div>
+    // Ciemna mapa bazowa
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap contributors, © CARTO',
+        maxZoom: 19
+    }).addTo(map);
 
-    <script>
-        class WindFlowVisualization {
-            constructor() {
-                this.canvas = document.getElementById('canvas');
-                this.ctx = this.canvas.getContext('2d', { alpha: false });
-                this.particles = [];
-                this.velocityField = null;
-                this.buildingMask = null;
-                this.terrainData = null;
-                
-                // Grid params matching CFD simulation
-                this.gridWidth = 400;
-                this.gridHeight = 400;
-                this.cellSize = 5; // meters
-                
-                // Rendering params
-                this.particleCount = 10000;
-                this.particleSpeed = 1;
-                this.fadeOpacity = 0.98;
-                this.lineWidth = 1;
-                this.colorMode = 'flow';
-                
-                // Wind params
-                this.windSpeed = 10;
-                this.windDirection = 270;
-                
-                // Performance
-                this.frameCount = 0;
-                this.lastTime = performance.now();
-                this.fps = 60;
-                
-                this.init();
-            }
-            
-            async init() {
-                this.setupCanvas();
-                await this.loadVelocityField();
-                await this.loadTerrainData();
-                this.initParticles();
-                this.setupControls();
-                this.animate();
-                
-                document.getElementById('loading').style.display = 'none';
-            }
-            
-            setupCanvas() {
-                const resize = () => {
-                    this.canvas.width = window.innerWidth;
-                    this.canvas.height = window.innerHeight;
-                    this.scaleX = this.canvas.width / this.gridWidth;
-                    this.scaleY = this.canvas.height / this.gridHeight;
-                };
-                resize();
-                window.addEventListener('resize', resize);
-                
-                // Performance: disable image smoothing
-                this.ctx.imageSmoothingEnabled = false;
-            }
-            
-            async loadVelocityField() {
-                // Simulate loading CFD data from backend
-                // In production: fetch from skrypt2_wiatr.py output
-                
-                try {
-                    // Try loading actual data
-                    const response = await fetch('./wyniki/rastry/wind_velocity_field.json');
-                    if (response.ok) {
-                        const data = await response.json();
-                        this.velocityField = data;
-                    } else {
-                        this.generateSyntheticField();
-                    }
-                } catch {
-                    this.generateSyntheticField();
-                }
-            }
-            
-            generateSyntheticField() {
-                // Generate realistic urban wind field with building wakes
-                this.velocityField = {
-                    u: new Float32Array(this.gridWidth * this.gridHeight),
-                    v: new Float32Array(this.gridWidth * this.gridHeight),
-                    buildings: new Uint8Array(this.gridWidth * this.gridHeight)
-                };
-                
-                const rad = this.windDirection * Math.PI / 180;
-                const baseU = Math.sin(rad) * this.windSpeed;
-                const baseV = Math.cos(rad) * this.windSpeed;
-                
-                for (let y = 0; y < this.gridHeight; y++) {
-                    for (let x = 0; x < this.gridWidth; x++) {
-                        const idx = y * this.gridWidth + x;
-                        
-                        // Add building obstacles (synthetic)
-                        const buildingNoise = this.noise2D(x * 0.02, y * 0.02);
-                        const isBuilding = buildingNoise > 0.3 && 
-                                         x > 100 && x < 300 && 
-                                         y > 100 && y < 300;
-                        
-                        if (isBuilding) {
-                            this.velocityField.buildings[idx] = 1;
-                            this.velocityField.u[idx] = 0;
-                            this.velocityField.v[idx] = 0;
-                        } else {
-                            // Flow around buildings with turbulence
-                            let u = baseU;
-                            let v = baseV;
-                            
-                            // Check for upstream buildings
-                            const checkDist = 20;
-                            let wake = 0;
-                            
-                            for (let d = 1; d < checkDist; d++) {
-                                const checkX = Math.round(x - d * Math.sin(rad));
-                                const checkY = Math.round(y - d * Math.cos(rad));
-                                
-                                if (checkX >= 0 && checkX < this.gridWidth && 
-                                    checkY >= 0 && checkY < this.gridHeight) {
-                                    const checkIdx = checkY * this.gridWidth + checkX;
-                                    if (this.velocityField.buildings[checkIdx]) {
-                                        wake = Math.exp(-d * 0.1);
-                                        break;
-                                    }
-                                }
-                            }
-                            
-                            // Apply wake turbulence
-                            if (wake > 0) {
-                                const turbulence = Math.sin(x * 0.5 + y * 0.3) * wake;
-                                u *= (1 - wake * 0.7);
-                                v *= (1 - wake * 0.7);
-                                u += turbulence * 2;
-                                v += Math.cos(x * 0.4) * turbulence;
-                            }
-                            
-                            // Add general turbulence
-                            u += this.noise2D(x * 0.05, y * 0.05) * 2;
-                            v += this.noise2D(x * 0.05 + 100, y * 0.05) * 2;
-                            
-                            this.velocityField.u[idx] = u;
-                            this.velocityField.v[idx] = v;
-                        }
-                    }
-                }
-                
-                // Smooth the field (Gaussian blur for realism)
-                this.smoothField();
-            }
-            
-            smoothField() {
-                const kernel = [0.0625, 0.125, 0.0625, 0.125, 0.25, 0.125, 0.0625, 0.125, 0.0625];
-                const tempU = new Float32Array(this.velocityField.u);
-                const tempV = new Float32Array(this.velocityField.v);
-                
-                for (let y = 1; y < this.gridHeight - 1; y++) {
-                    for (let x = 1; x < this.gridWidth - 1; x++) {
-                        const idx = y * this.gridWidth + x;
-                        if (this.velocityField.buildings[idx]) continue;
-                        
-                        let sumU = 0, sumV = 0, k = 0;
-                        for (let dy = -1; dy <= 1; dy++) {
-                            for (let dx = -1; dx <= 1; dx++) {
-                                const nIdx = (y + dy) * this.gridWidth + (x + dx);
-                                if (!this.velocityField.buildings[nIdx]) {
-                                    sumU += tempU[nIdx] * kernel[k];
-                                    sumV += tempV[nIdx] * kernel[k];
-                                }
-                                k++;
-                            }
-                        }
-                        
-                        this.velocityField.u[idx] = sumU;
-                        this.velocityField.v[idx] = sumV;
-                    }
-                }
-            }
-            
-            async loadTerrainData() {
-                // Load DEM/DSM data
-                // In production: load actual NMT/NMPT rasters
-                this.terrainData = new Float32Array(this.gridWidth * this.gridHeight);
-                
-                for (let i = 0; i < this.terrainData.length; i++) {
-                    this.terrainData[i] = Math.sin(i * 0.001) * 10 + 50;
-                }
-            }
-            
-            initParticles() {
-                this.particles = [];
-                for (let i = 0; i < this.particleCount; i++) {
-                    this.particles.push(this.createParticle());
-                }
-            }
-            
-            createParticle() {
-                return {
-                    x: Math.random() * this.gridWidth,
-                    y: Math.random() * this.gridHeight,
-                    age: 0,
-                    maxAge: 100 + Math.random() * 100,
-                    path: []
-                };
-            }
-            
-            updateParticle(particle) {
-                const gridX = Math.floor(particle.x);
-                const gridY = Math.floor(particle.y);
-                
-                if (gridX < 0 || gridX >= this.gridWidth - 1 || 
-                    gridY < 0 || gridY >= this.gridHeight - 1) {
-                    return this.createParticle();
-                }
-                
-                // Bilinear interpolation for smooth movement
-                const fx = particle.x - gridX;
-                const fy = particle.y - gridY;
-                
-                const idx00 = gridY * this.gridWidth + gridX;
-                const idx10 = gridY * this.gridWidth + gridX + 1;
-                const idx01 = (gridY + 1) * this.gridWidth + gridX;
-                const idx11 = (gridY + 1) * this.gridWidth + gridX + 1;
-                
-                const u = (1 - fx) * (1 - fy) * this.velocityField.u[idx00] +
-                         fx * (1 - fy) * this.velocityField.u[idx10] +
-                         (1 - fx) * fy * this.velocityField.u[idx01] +
-                         fx * fy * this.velocityField.u[idx11];
-                         
-                const v = (1 - fx) * (1 - fy) * this.velocityField.v[idx00] +
-                         fx * (1 - fy) * this.velocityField.v[idx10] +
-                         (1 - fx) * fy * this.velocityField.v[idx01] +
-                         fx * fy * this.velocityField.v[idx11];
-                
-                // Check for building collision
-                if (this.velocityField.buildings[idx00]) {
-                    return this.createParticle();
-                }
-                
-                // Update position
-                particle.x += u * this.particleSpeed * 0.1;
-                particle.y += v * this.particleSpeed * 0.1;
-                
-                // Store path for trail effect
-                particle.path.push({x: particle.x * this.scaleX, y: particle.y * this.scaleY});
-                if (particle.path.length > 10) {
-                    particle.path.shift();
-                }
-                
-                particle.age++;
-                
-                if (particle.age > particle.maxAge) {
-                    return this.createParticle();
-                }
-                
-                return particle;
-            }
-            
-            drawParticle(particle) {
-                if (particle.path.length < 2) return;
-                
-                const speed = Math.sqrt(
-                    Math.pow(particle.path[particle.path.length - 1].x - particle.path[0].x, 2) +
-                    Math.pow(particle.path[particle.path.length - 1].y - particle.path[0].y, 2)
-                );
-                
-                // Color based on speed
-                const hue = this.colorMode === 'flow' ? 
-                    200 - speed * 2 : // Blue to green
-                    this.colorMode === 'pressure' ?
-                    280 - speed * 3 : // Purple gradient
-                    60 + speed * 2; // Yellow to red for vorticity
-                    
-                const saturation = 70 + speed;
-                const lightness = 50 + speed * 0.5;
-                const alpha = (1 - particle.age / particle.maxAge) * 0.8;
-                
-                this.ctx.strokeStyle = `hsla(${hue}, ${saturation}%, ${lightness}%, ${alpha})`;
-                this.ctx.lineWidth = this.lineWidth;
-                this.ctx.beginPath();
-                
-                for (let i = 0; i < particle.path.length; i++) {
-                    const point = particle.path[i];
-                    if (i === 0) {
-                        this.ctx.moveTo(point.x, point.y);
-                    } else {
-                        this.ctx.lineTo(point.x, point.y);
-                    }
-                }
-                
-                this.ctx.stroke();
-            }
-            
-            drawBuildings() {
-                this.ctx.fillStyle = 'rgba(20, 20, 30, 0.6)';
-                
-                for (let y = 0; y < this.gridHeight; y++) {
-                    for (let x = 0; x < this.gridWidth; x++) {
-                        const idx = y * this.gridWidth + x;
-                        if (this.velocityField.buildings[idx]) {
-                            this.ctx.fillRect(
-                                x * this.scaleX,
-                                y * this.scaleY,
-                                this.scaleX,
-                                this.scaleY
-                            );
-                        }
-                    }
-                }
-            }
-            
-            animate() {
-                // Fade effect
-                this.ctx.fillStyle = `rgba(0, 0, 0, ${1 - this.fadeOpacity})`;
-                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-                
-                // Update and draw particles
-                for (let i = 0; i < this.particles.length; i++) {
-                    this.particles[i] = this.updateParticle(this.particles[i]);
-                    this.drawParticle(this.particles[i]);
-                }
-                
-                // Draw buildings overlay
-                if (document.querySelector('[data-layer="buildings"].active')) {
-                    this.drawBuildings();
-                }
-                
-                // Update stats
-                this.updateStats();
-                
-                requestAnimationFrame(() => this.animate());
-            }
-            
-            updateStats() {
-                this.frameCount++;
-                const now = performance.now();
-                if (now - this.lastTime > 1000) {
-                    this.fps = this.frameCount;
-                    this.frameCount = 0;
-                    this.lastTime = now;
-                    
-                    document.getElementById('fps').textContent = this.fps;
-                    document.getElementById('activeParticles').textContent = this.particles.length;
-                    
-                    // Calculate max velocity
-                    let maxV = 0;
-                    for (let i = 0; i < this.velocityField.u.length; i++) {
-                        const v = Math.sqrt(
-                            this.velocityField.u[i] ** 2 + 
-                            this.velocityField.v[i] ** 2
-                        );
-                        maxV = Math.max(maxV, v);
-                    }
-                    document.getElementById('maxVelocity').textContent = maxV.toFixed(1);
-                }
-            }
-            
-            setupControls() {
-                // Wind speed
-                document.getElementById('windSpeed').addEventListener('input', (e) => {
-                    this.windSpeed = parseFloat(e.target.value);
-                    document.getElementById('windSpeedValue').textContent = `${this.windSpeed} m/s`;
-                    this.generateSyntheticField();
-                });
-                
-                // Wind direction
-                document.getElementById('windDirection').addEventListener('input', (e) => {
-                    this.windDirection = parseFloat(e.target.value);
-                    document.getElementById('windDirectionValue').textContent = `${this.windDirection}°`;
-                    this.generateSyntheticField();
-                });
-                
-                // Particle count
-                document.getElementById('particleCount').addEventListener('input', (e) => {
-                    const newCount = parseInt(e.target.value);
-                    document.getElementById('particleCountValue').textContent = newCount;
-                    
-                    if (newCount > this.particleCount) {
-                        for (let i = this.particleCount; i < newCount; i++) {
-                            this.particles.push(this.createParticle());
-                        }
-                    } else {
-                        this.particles.splice(newCount);
-                    }
-                    this.particleCount = newCount;
-                });
-                
-                // Particle speed
-                document.getElementById('particleSpeed').addEventListener('input', (e) => {
-                    this.particleSpeed = parseFloat(e.target.value);
-                });
-                
-                // Visualization modes
-                document.querySelectorAll('[data-mode]').forEach(btn => {
-                    btn.addEventListener('click', (e) => {
-                        document.querySelectorAll('[data-mode]').forEach(b => b.classList.remove('active'));
-                        e.target.classList.add('active');
-                        this.colorMode = e.target.dataset.mode;
-                    });
-                });
-                
-                // Layer toggles
-                document.querySelectorAll('[data-layer]').forEach(btn => {
-                    btn.addEventListener('click', (e) => {
-                        e.target.classList.toggle('active');
-                    });
-                });
-            }
-            
-            // Simplex noise for realistic turbulence
-            noise2D(x, y) {
-                // Simplified Perlin noise
-                const X = Math.floor(x) & 255;
-                const Y = Math.floor(y) & 255;
-                x -= Math.floor(x);
-                y -= Math.floor(y);
-                const u = this.fade(x);
-                const v = this.fade(y);
-                const A = this.p[X] + Y;
-                const B = this.p[X + 1] + Y;
-                return this.lerp(v,
-                    this.lerp(u, this.grad2(this.p[A], x, y), this.grad2(this.p[B], x - 1, y)),
-                    this.lerp(u, this.grad2(this.p[A + 1], x, y - 1), this.grad2(this.p[B + 1], x - 1, y - 1))
-                );
-            }
-            
-            fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
-            lerp(t, a, b) { return a + t * (b - a); }
-            grad2(hash, x, y) {
-                const h = hash & 3;
-                const u = h < 2 ? x : y;
-                const v = h < 2 ? y : x;
-                return ((h & 1) === 0 ? u : -u) + ((h & 2) === 0 ? v : -v);
-            }
-            
-            p = new Uint8Array(512);
-            
-            constructor() {
-                super();
-                // Initialize permutation table
-                for (let i = 0; i < 256; i++) {
-                    this.p[i] = this.p[i + 256] = Math.floor(Math.random() * 256);
-                }
+    let velocityLayer = null;
+    let activeLayer = null;
+
+    const overlayLayers = {
+        "🏗️ Pokrycie terenu": L.tileLayer('./wyniki/kafelki/landcover/{z}/{x}/{y}.png', { 
+            tms: true, 
+            opacity: 0.8 
+        }),
+        "🌳 Korony drzew": L.tileLayer('./wyniki/kafelki/korony_drzew/{z}/{x}/{y}.png', { 
+            tms: true, 
+            opacity: 0.85 
+        }),
+        "⛰️ Model Terenu (NMT)": L.tileLayer('./wyniki/kafelki/nmt/{z}/{x}/{y}.png', { 
+            tms: true, 
+            opacity: 0.8 
+        }),
+        "🌊 Zasięg podtopień": L.tileLayer('./wyniki/kafelki/podtopienia/{z}/{x}/{y}.png', { 
+            tms: true, 
+            opacity: 0.7 
+        }),
+        "💨 Prędkość wiatru": L.tileLayer('./wyniki/kafelki/wiatr/{z}/{x}/{y}.png', { 
+            tms: true, 
+            opacity: 0.6 
+        }),
+        "🌡️ Komfort termiczny": L.tileLayer('./wyniki/kafelki/komfort/{z}/{x}/{y}.png', { 
+            tms: true, 
+            opacity: 0.8 
+        })
+    };
+    
+    const layerControl = L.control.layers(null, overlayLayers, { 
+        collapsed: false,
+        position: 'topleft'
+    }).addTo(map);
+
+    const legendControl = L.control({ position: "bottomright" });
+    legendControl.onAdd = function() {
+        const div = L.DomUtil.create("div", "legend-placeholder");
+        return div;
+    };
+    legendControl.addTo(map);
+
+    function createGradientLegend(title, min, max, gradientCss, weatherData = null) {
+        const div = L.DomUtil.create("div", "legend");
+        let weatherInfo = '';
+        if (weatherData) {
+            if (title.includes('wiatr')) {
+                weatherInfo = `<div class="weather-info">🌪️ Bazowy: ${weatherData.wind_speed.toFixed(1)} m/s, ${weatherData.wind_direction.toFixed(0)}°</div>`;
+            } else if (title.includes('termiczny')) {
+                weatherInfo = `<div class="weather-info">🌡️ Temperatura: ${weatherData.temperature.toFixed(1)}°C | 💧 Wilgotność: ${weatherData.humidity}%</div>`;
             }
         }
         
-        // Initialize on load
-        window.addEventListener('DOMContentLoaded', () => {
-            new WindFlowVisualization();
+        div.innerHTML = `
+            <div class="title">${title}</div>
+            <div class="gradient" style="background: ${gradientCss};"></div>
+            <div class="labels">
+                <span>${min}</span>
+                <span>${((min + max) / 2).toFixed(1)}</span>
+                <span>${max}</span>
+            </div>
+            ${weatherInfo}
+        `;
+        return div;
+    }
+
+    const legends = {
+        "🏗️ Pokrycie terenu": () => {
+            const div = L.DomUtil.create("div", "legend");
+            const items = {
+                'Nawierzchnie utwardzone': 'linear-gradient(45deg, #a9a9a9, #808080)',
+                'Budynki': 'linear-gradient(45deg, #dc143c, #b91c3c)',
+                'Drzewa / Lasy': 'linear-gradient(45deg, #228b22, #166b16)',
+                'Trawa / Tereny zielone': 'linear-gradient(45deg, #7cfc00, #65d000)',
+                'Gleba / Nieużytki': 'linear-gradient(45deg, #d2b48c, #c19a6b)',
+                'Woda': 'linear-gradient(45deg, #1e90ff, #0066cc)'
+            };
+            let labels = '<div class="title">Pokrycie terenu</div>';
+            for (const [key, gradient] of Object.entries(items)) {
+                labels += `<div style="margin-bottom: 8px;"><i style="background:${gradient}"></i>${key}</div>`;
+            }
+            div.innerHTML = labels;
+            return div;
+        },
+        "🌳 Korony drzew": (weatherData) => createGradientLegend(
+            "Wysokość drzew [m]", 4, 40, 
+            "linear-gradient(to right, #ffffcc, #c2e699, #78c679, #31a354, #006837)"
+        ),
+        "⛰️ Model Terenu (NMT)": (weatherData) => createGradientLegend(
+            "Wysokość n.p.m.", 5, 95, 
+            "linear-gradient(to right, #2166ac, #5aae61, #a6d96a, #e6f598, #ffffbf, #fee08b, #fdae61, #f46d43, #d73027)"
+        ),
+        "🌊 Zasięg podtopień": (weatherData) => createGradientLegend(
+            "Głębokość wody [m]", 0.01, 1.5, 
+            "linear-gradient(to right, #deebf7, #9ecae1, #6baed6, #4292c6, #2171b5, #08519c)"
+        ),
+        "💨 Prędkość wiatru": (weatherData) => createGradientLegend(
+            "Prędkość wiatru [m/s]", 0, (weatherData.wind_speed * 1.5).toFixed(1), 
+            "linear-gradient(to right, #fde725, #7ad151, #22a884, #2a788e, #414487, #440154)",
+            weatherData
+        ),
+        "🌡️ Komfort termiczny": (weatherData) => createGradientLegend(
+            "UTCI [°C]", 9, 38, 
+            "linear-gradient(to right, #053061, #4575b4, #74add1, #abd9e9, #e0f3f8, #ffffbf, #fee090, #fdae61, #f46d43, #d73027, #a50026)",
+            weatherData
+        )
+    };
+    
+    let currentWeatherData = { temperature: 25, wind_speed: 5, wind_direction: 270, humidity: 50 };
+    
+    // Pobierz aktualne dane pogodowe
+    fetch(`https://api.open-meteo.com/v1/forecast?latitude=54.16&longitude=19.40&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m&timezone=Europe/Warsaw`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.current) {
+                currentWeatherData = {
+                    temperature: data.current.temperature_2m,
+                    humidity: data.current.relative_humidity_2m,
+                    wind_speed: data.current.wind_speed_10m / 3.6,
+                    wind_direction: data.current.wind_direction_10m
+                };
+                console.log('Pobrano dane pogodowe:', currentWeatherData);
+                // Odśwież legendę jeśli jakaś warstwa jest aktywna
+                if (activeLayer && legends[activeLayer]) {
+                    updateLegend(activeLayer, currentWeatherData);
+                }
+            }
+        })
+        .catch(error => {
+            console.warn('Błąd pobierania danych pogodowych:', error);
         });
-    </script>
+
+    map.on('overlayadd', (e) => {
+        activeLayer = e.name;
+        updateLegend(e.name, currentWeatherData);
+        
+        if (e.name === "💨 Prędkość wiatru") {
+            loadAndDisplayVelocity();
+        }
+    });
+
+    map.on('overlayremove', (e) => {
+        if (activeLayer === e.name) {
+            activeLayer = null;
+            updateLegend(null);
+        }
+        
+        if (e.name === "💨 Prędkość wiatru" && velocityLayer) {
+            map.removeLayer(velocityLayer);
+            velocityLayer = null;
+        }
+    });
+    
+    function updateLegend(layerName, weatherData) {
+        const placeholder = document.querySelector('.legend-placeholder');
+        placeholder.innerHTML = "";
+        if (layerName && legends[layerName]) {
+            const legendDiv = legends[layerName](weatherData);
+            placeholder.appendChild(legendDiv);
+        }
+    }
+
+    async function loadAndDisplayVelocity() {
+        try {
+            if (velocityLayer) {
+                map.removeLayer(velocityLayer);
+                velocityLayer = null;
+            }
+            
+            const [speedTiff, dirTiff] = await Promise.all([
+                GeoTIFF.fromUrl('./wyniki/rastry/predkosc_wiatru.tif'),
+                GeoTIFF.fromUrl('./wyniki/rastry/kierunek_wiatru.tif')
+            ]);
+            
+            const speedImage = await speedTiff.getImage();
+            const dirImage = await dirTiff.getImage();
+            
+            const speedData = (await speedImage.readRasters())[0];
+            const dirData = (await dirImage.readRasters())[0];
+            const bbox = speedImage.getBoundingBox();
+
+            // Konwersja kierunku z stopni na składowe U/V
+            const uData = new Float32Array(speedData.length);
+            const vData = new Float32Array(speedData.length);
+            
+            for (let i = 0; i < speedData.length; i++) {
+                const speed = speedData[i];
+                const direction = dirData[i] * Math.PI / 180; // stopnie na radiany
+                uData[i] = -speed * Math.sin(direction); // składowa wschód-zachód
+                vData[i] = -speed * Math.cos(direction); // składowa północ-południe
+            }
+
+            velocityLayer = L.velocityLayer({
+                displayValues: true,
+                displayOptions: {
+                    velocityType: "Wiatr",
+                    position: "bottomleft",
+                    emptyString: "Brak danych",
+                    angleConvention: "meteo",
+                    speedUnit: "m/s",
+                    displayPosition: 'bottomleft'
+                },
+                data: {
+                    grid: {
+                        dx: Math.abs(speedImage.getResolution()[0]),
+                        dy: Math.abs(speedImage.getResolution()[1]),
+                        nx: speedImage.getWidth(),
+                        ny: speedImage.getHeight(),
+                        la1: bbox[3], // północ
+                        lo1: bbox[0], // zachód
+                        la2: bbox[1], // południe
+                        lo2: bbox[2]  // wschód
+                    },
+                    u: Array.from(uData),
+                    v: Array.from(vData)
+                },
+                minVelocity: 0,
+                maxVelocity: currentWeatherData.wind_speed * 1.8,
+                velocityScale: 0.005,
+                opacity: 0.8,
+                particleAge: 90,
+                lineWidth: 2,
+                particleMultiplier: 0.005
+            });
+            
+            velocityLayer.addTo(map);
+            console.log('Warstwa wiatru załadowana pomyślnie');
+            
+        } catch (error) {
+            console.error('Błąd ładowania warstwy wiatru:', error);
+        }
+    }
+    
+    // Domyślnie włącz pokrycie terenu
+    overlayLayers["🏗️ Pokrycie terenu"].addTo(map);
+    activeLayer = "🏗️ Pokrycie terenu";
+    updateLegend("🏗️ Pokrycie terenu", currentWeatherData);
+</script>
 </body>
 </html>
