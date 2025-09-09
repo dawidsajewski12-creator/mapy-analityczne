@@ -15,6 +15,41 @@
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
         
+        .weather-widget {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255,255,255,0.95);
+            backdrop-filter: blur(10px);
+            padding: 12px 20px;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            border: 1px solid rgba(255,255,255,0.18);
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            font-size: 14px;
+            z-index: 1000;
+            animation: fadeInScale 0.3s ease-out;
+        }
+        
+        .weather-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            color: #334155;
+        }
+        
+        .weather-icon {
+            font-size: 18px;
+        }
+        
+        .weather-value {
+            font-weight: 600;
+            color: #1e40af;
+        }
+        
         .leaflet-control-layers {
             background: rgba(255,255,255,0.95) !important;
             backdrop-filter: blur(10px);
@@ -112,6 +147,24 @@
 </head>
 <body>
 <div id="map"></div>
+<div class="weather-widget" id="weatherWidget" style="display:none;">
+    <div class="weather-item">
+        <span class="weather-icon">🌡️</span>
+        <span id="temperature" class="weather-value">--</span>°C
+    </div>
+    <div class="weather-item">
+        <span class="weather-icon">💧</span>
+        <span id="humidity" class="weather-value">--</span>%
+    </div>
+    <div class="weather-item">
+        <span class="weather-icon">💨</span>
+        <span id="windSpeed" class="weather-value">--</span> m/s
+    </div>
+    <div class="weather-item">
+        <span class="weather-icon">🧭</span>
+        <span id="windDirection" class="weather-value">--</span>°
+    </div>
+</div>
 <script>
     const map = L.map('map', {
         zoomControl: false
@@ -230,26 +283,6 @@
     activeLayers.add("🏗️ Pokrycie terenu");
     updateLegend();
     
-    // Pobierz i wyświetl dane pogodowe
-    async function loadWeatherData() {
-        try {
-            const response = await fetch('./wyniki/weather.json');
-            if (response.ok) {
-                const data = await response.json();
-                document.getElementById('temperature').textContent = data.temperature;
-                document.getElementById('humidity').textContent = data.humidity;
-                document.getElementById('windSpeed').textContent = data.wind_speed;
-                document.getElementById('windDirection').textContent = data.wind_direction;
-                document.getElementById('weatherWidget').style.display = 'flex';
-            }
-        } catch (error) {
-            console.log('Brak danych pogodowych');
-        }
-    }
-    
-    loadWeatherData();
-    // Odświeżaj dane pogodowe co 5 minut
-    setInterval(loadWeatherData, 300000);
     // Pobierz i wyświetl dane pogodowe
     async function loadWeatherData() {
         try {
