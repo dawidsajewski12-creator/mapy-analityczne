@@ -250,6 +250,26 @@
     loadWeatherData();
     // Odświeżaj dane pogodowe co 5 minut
     setInterval(loadWeatherData, 300000);
+    // Pobierz i wyświetl dane pogodowe
+    async function loadWeatherData() {
+        try {
+            const response = await fetch('./wyniki/weather.json');
+            if (response.ok) {
+                const data = await response.json();
+                document.getElementById('temperature').textContent = data.temperature;
+                document.getElementById('humidity').textContent = data.humidity;
+                document.getElementById('windSpeed').textContent = data.wind_speed;
+                document.getElementById('windDirection').textContent = data.wind_direction;
+                document.getElementById('weatherWidget').style.display = 'flex';
+            }
+        } catch (error) {
+            console.log('Brak danych pogodowych');
+        }
+    }
+    
+    loadWeatherData();
+    // Odświeżaj dane pogodowe co 5 minut
+    setInterval(loadWeatherData, 300000);
 </script>
 </body>
 </html>
