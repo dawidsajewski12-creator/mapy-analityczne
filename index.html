@@ -163,27 +163,6 @@
         "🏗️ Pokrycie terenu": L.tileLayer('./wyniki/kafelki/landcover/{z}/{x}/{y}.png', { 
             tms: true, 
             opacity: 0.8 
-        }),
-        "🌳 Korony drzew": L.tileLayer('./wyniki/kafelki/korony_drzew/{z}/{x}/{y}.png', { 
-            tms: true, 
-            opacity: 0.85 
-        }),
-        "⛰️ Model Terenu (NMT)": L.tileLayer('./wyniki/kafelki/nmt/{z}/{x}/{y}.png', { 
-            tms: true, 
-            opacity: 0.8 
-        }),
-        "🌊 Zasięg podtopień": L.tileLayer('./wyniki/kafelki/podtopienia/{z}/{x}/{y}.png', { 
-            tms: true, 
-            opacity: 0.7 
-        }),
-        "💨 Prędkość wiatru": L.tileLayer('./wyniki/kafelki/wiatr/{z}/{x}/{y}.png', { 
-            tms: true, 
-            opacity: 0.6 
-        }),
-        "🌡️ Komfort termiczny": L.tileLayer('./wyniki/kafelki/komfort/{z}/{x}/{y}.png', { 
-            tms: true, 
-            opacity: 0.8 
-        })
     };
     
     const layerControl = L.control.layers(null, overlayLayers, { 
@@ -396,3 +375,4 @@
 </script>
 </body>
 </html>
+
