@@ -72,6 +72,21 @@
             box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
         }
         
+        .legend .gradient-bar {
+            width: 100%;
+            height: 20px;
+            margin: 10px 0;
+            border-radius: 4px;
+            border: 1px solid rgba(0,0,0,0.1);
+        }
+        
+        .legend .gradient-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: #666;
+        }
+        
         .leaflet-popup-content-wrapper {
             border-radius: 12px;
             background: rgba(255,255,255,0.95);
@@ -116,6 +131,14 @@
         "🏗️ Pokrycie terenu": L.tileLayer('./wyniki/kafelki/landcover/{z}/{x}/{y}.png', { 
             tms: true, 
             opacity: 0.8 
+        }),
+        "🏔️ NMT (Model Terenu)": L.tileLayer('./wyniki/kafelki/nmt/{z}/{x}/{y}.png', { 
+            tms: true, 
+            opacity: 0.7 
+        }),
+        "🏙️ NMPT (Model Pokrycia)": L.tileLayer('./wyniki/kafelki/nmpt/{z}/{x}/{y}.png', { 
+            tms: true, 
+            opacity: 0.7 
         })
     };
     
@@ -149,30 +172,55 @@
         return div;
     }
 
-    map.on('overlayadd', (e) => {
-        if (e.name === "🏗️ Pokrycie terenu") {
-            updateLegend(true);
+    function createElevationLegend(title, colormap) {
+        const div = L.DomUtil.create("div", "legend");
+        let gradient;
+        
+        if (colormap === 'terrain') {
+            gradient = 'linear-gradient(to right, #333447 0%, #3b6829 25%, #8b7c4c 50%, #d9d0a8 75%, #ffffff 100%)';
+        } else if (colormap === 'viridis') {
+            gradient = 'linear-gradient(to right, #440154 0%, #31688e 33%, #35b779 66%, #fde725 100%)';
         }
+        
+        let html = `<div class="title">${title}</div>`;
+        html += `<div class="gradient-bar" style="background: ${gradient};"></div>`;
+        html += '<div class="gradient-labels"><span>Min</span><span>Max</span></div>';
+        html += '<div style="text-align: center; margin-top: 5px; font-size: 11px; color: #888;">Wysokość [m n.p.m.]</div>';
+        
+        div.innerHTML = html;
+        return div;
+    }
+
+    let activeLayers = new Set();
+
+    map.on('overlayadd', (e) => {
+        activeLayers.add(e.name);
+        updateLegend();
     });
 
     map.on('overlayremove', (e) => {
-        if (e.name === "🏗️ Pokrycie terenu") {
-            updateLegend(false);
-        }
+        activeLayers.delete(e.name);
+        updateLegend();
     });
     
-    function updateLegend(show) {
+    function updateLegend() {
         const placeholder = document.querySelector('.legend-placeholder');
         placeholder.innerHTML = "";
-        if (show) {
-            const legendDiv = createLandcoverLegend();
-            placeholder.appendChild(legendDiv);
+        
+        // Wyświetl tylko jedną legendę - priorytet: NMPT > NMT > Pokrycie
+        if (activeLayers.has("🏙️ NMPT (Model Pokrycia)")) {
+            placeholder.appendChild(createElevationLegend("NMPT - Model Pokrycia", "viridis"));
+        } else if (activeLayers.has("🏔️ NMT (Model Terenu)")) {
+            placeholder.appendChild(createElevationLegend("NMT - Model Terenu", "terrain"));
+        } else if (activeLayers.has("🏗️ Pokrycie terenu")) {
+            placeholder.appendChild(createLandcoverLegend());
         }
     }
     
     // Domyślnie włącz pokrycie terenu
     overlayLayers["🏗️ Pokrycie terenu"].addTo(map);
-    updateLegend('landcover');
+    activeLayers.add("🏗️ Pokrycie terenu");
+    updateLegend();
 </script>
 </body>
 </html>
