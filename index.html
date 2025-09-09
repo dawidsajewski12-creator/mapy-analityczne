@@ -301,6 +301,175 @@
     }
     
     loadWeatherData();
+    
+    // Wind visualization
+    let windArrowsLayer = null;
+    let windParticles = [];
+    let animationFrame = null;
+    
+    async function loadWindArrows() {
+        try {
+            const response = await fetch('./wyniki/wind_arrows.json');
+            if (!response.ok) return null;
+            return await response.json();
+        } catch (e) {
+            console.log('Brak danych wiatru');
+            return null;
+        }
+    }
+    
+    function createWindArrow(arrow) {
+        const scale = Math.min(arrow.speed / 10, 1);
+        const angle = Math.atan2(arrow.v, arrow.u) * (180 / Math.PI);
+        
+        return L.marker([arrow.y, arrow.x], {
+            icon: L.divIcon({
+                html: `<div style="
+                    transform: rotate(${angle}deg);
+                    width: ${20 + scale * 20}px;
+                    height: 2px;
+                    background: linear-gradient(to right, 
+                        rgba(59, 130, 246, ${0.3 + scale * 0.7}),
+                        transparent);
+                    position: relative;
+                    ">
+                    <div style="
+                        position: absolute;
+                        right: 0;
+                        top: -3px;
+                        width: 0;
+                        height: 0;
+                        border-left: 8px solid rgba(59, 130, 246, ${0.3 + scale * 0.7});
+                        border-top: 4px solid transparent;
+                        border-bottom: 4px solid transparent;
+                    "></div>
+                </div>`,
+                className: 'wind-arrow',
+                iconSize: [40, 10]
+            })
+        });
+    }
+    
+    async function toggleWind() {
+        const button = document.getElementById('windToggle');
+        
+        if (windArrowsLayer) {
+            // Wyłącz
+            map.removeLayer(windArrowsLayer);
+            windArrowsLayer = null;
+            button.textContent = 'Włącz przepływ wiatru';
+            button.classList.remove('active');
+            
+            // Zatrzymaj animację
+            if (animationFrame) {
+                cancelAnimationFrame(animationFrame);
+                animationFrame = null;
+            }
+            
+            // Usuń cząsteczki
+            document.querySelectorAll('.wind-particle').forEach(p => p.remove());
+            windParticles = [];
+        } else {
+            // Włącz
+            const arrows = await loadWindArrows();
+            if (!arrows) {
+                alert('Brak danych symulacji wiatru. Uruchom ponownie analizę.');
+                return;
+            }
+            
+            windArrowsLayer = L.layerGroup();
+            arrows.forEach(arrow => {
+                if (arrow.speed > 0.5) {  // Pokaż tylko znaczące przepływy
+                    createWindArrow(arrow).addTo(windArrowsLayer);
+                }
+            });
+            windArrowsLayer.addTo(map);
+            
+            button.textContent = 'Wyłącz przepływ wiatru';
+            button.classList.add('active');
+            
+            // Uruchom animację cząsteczek
+            startParticleAnimation(arrows);
+        }
+    }
+    
+    function startParticleAnimation(arrows) {
+        // Utwórz cząsteczki
+        for (let i = 0; i < 100; i++) {
+            const particle = document.createElement('div');
+            particle.className = 'wind-particle';
+            particle.style.cssText = `
+                position: absolute;
+                width: 3px;
+                height: 3px;
+                background: radial-gradient(circle, rgba(59,130,246,0.8), transparent);
+                border-radius: 50%;
+                pointer-events: none;
+                z-index: 500;
+                transition: all 0.1s linear;
+            `;
+            document.getElementById('map').appendChild(particle);
+            
+            // Losowa pozycja startowa
+            const arrow = arrows[Math.floor(Math.random() * arrows.length)];
+            windParticles.push({
+                element: particle,
+                x: arrow.x + (Math.random() - 0.5) * 0.001,
+                y: arrow.y + (Math.random() - 0.5) * 0.001,
+                life: Math.random() * 100
+            });
+        }
+        
+        // Funkcja animacji
+        function animate() {
+            windParticles.forEach(p => {
+                // Znajdź najbliższą strzałkę
+                let closestArrow = arrows[0];
+                let minDist = Infinity;
+                
+                arrows.forEach(a => {
+                    const dist = Math.sqrt(Math.pow(a.x - p.x, 2) + Math.pow(a.y - p.y, 2));
+                    if (dist < minDist) {
+                        minDist = dist;
+                        closestArrow = a;
+                    }
+                });
+                
+                // Przesuń cząsteczkę
+                if (closestArrow && minDist < 0.01) {
+                    p.x += closestArrow.u * 0.00001;
+                    p.y += closestArrow.v * 0.00001;
+                }
+                
+                // Zmniejsz życie
+                p.life--;
+                if (p.life <= 0) {
+                    // Reset cząsteczki
+                    const arrow = arrows[Math.floor(Math.random() * arrows.length)];
+                    p.x = arrow.x;
+                    p.y = arrow.y;
+                    p.life = 100;
+                }
+                
+                // Aktualizuj pozycję na mapie
+                const point = map.latLngToContainerPoint([p.y, p.x]);
+                p.element.style.left = point.x + 'px';
+                p.element.style.top = point.y + 'px';
+                p.element.style.opacity = p.life / 100;
+            });
+            
+            animationFrame = requestAnimationFrame(animate);
+        }
+        
+        animate();
+    }
+    
+    // Pokaż kontrolkę wiatru jeśli są dane
+    loadWindArrows().then(arrows => {
+        if (arrows) {
+            document.getElementById('windControl').style.display = 'block';
+        }
+    });
 </script>
 </body>
 </html>
