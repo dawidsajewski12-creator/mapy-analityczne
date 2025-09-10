@@ -180,24 +180,10 @@
         maxZoom: 19
     }).addTo(map);
 
-    const overlayLayers = {
-        "🏗️ Pokrycie terenu": L.tileLayer('./wyniki/kafelki/landcover/{z}/{x}/{y}.png', { 
-            tms: true, 
-            opacity: 0.8 
-        }),
-        "🏢 Budynki (wysokość)": L.tileLayer('./wyniki/kafelki/buildings/{z}/{x}/{y}.png', { 
-            tms: true, 
-            opacity: 0.85 
-        }),
-        "🏔️ NMT (Model Terenu)": L.tileLayer('./wyniki/kafelki/nmt/{z}/{x}/{y}.png', { 
-            tms: true, 
-            opacity: 0.7 
-        }),
-        "🏙️ NMPT (Model Pokrycia)": L.tileLayer('./wyniki/kafelki/nmpt/{z}/{x}/{y}.png', { 
-            tms: true, 
-            opacity: 0.7 
-        })
-    };
+const landcoverLayer = L.tileLayer('/mapy-analityczne/wyniki/kafelki/landcover/{z}/{x}/{y}.png', { attribution: 'Pokrycie terenu © GUGiK' });
+const nmtLayer = L.tileLayer('/mapy-analityczne/wyniki/kafelki/nmt/{z}/{x}/{y}.png', { attribution: 'NMT © GUGiK' });
+const nmptLayer = L.tileLayer('/mapy-analityczne/wyniki/kafelki/nmpt/{z}/{x}/{y}.png', { attribution: 'NMPT © GUGiK' });
+const buildingsLayer = L.tileLayer('/mapy-analityczne/wyniki/kafelki/buildings/{z}/{x}/{y}.png', { attribution: 'Budynki © GUGiK' });;
     
     const layerControl = L.control.layers(null, overlayLayers, { 
         collapsed: false,
@@ -309,7 +295,7 @@
     
     async function loadWindArrows() {
         try {
-            const response = await fetch('./wyniki/wind_arrows.json');
+             response = await fetch('./wyniki/wind_arrows.json');
             if (!response.ok) {
                 console.log('Wind arrows file not found');
                 return null;
@@ -502,3 +488,4 @@
 </script>
 </body>
 </html>
+
