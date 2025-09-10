@@ -310,13 +310,42 @@
     async function loadWindArrows() {
         try {
             const response = await fetch('./wyniki/wind_arrows.json');
-            if (!response.ok) return null;
-            return await response.json();
+            if (!response.ok) {
+                console.log('Wind arrows file not found');
+                return null;
+            }
+            const data = await response.json();
+            console.log(`Loaded ${data.length} wind arrows`);
+            return data;
         } catch (e) {
-            console.log('Brak danych wiatru');
+            console.log('Error loading wind data:', e);
             return null;
         }
     }
+    
+    // Sprawdź czy warstwa wiatru jest dostępna
+    async function checkWindLayer() {
+        try {
+            // Sprawdź czy istnieją kafelki
+            const testResponse = await fetch('./wyniki/kafelki/wind/11/1116/625.png', {method: 'HEAD'});
+            if (testResponse.ok) {
+                console.log('Wind tiles available');
+                return true;
+            }
+        } catch (e) {
+            console.log('Wind tiles not available');
+        }
+        return false;
+    }
+    
+    // Inicjalizacja - sprawdź dostępność warstw
+    checkWindLayer().then(hasWind => {
+        if (!hasWind) {
+            // Usuń warstwę wiatru z kontrolek jeśli nie ma danych
+            delete overlayLayers["🌬️ Prędkość wiatru"];
+            console.log('Wind layer removed - no data');
+        }
+    });
     
     function createWindArrow(arrow) {
         const scale = Math.min(arrow.speed / 10, 1);
