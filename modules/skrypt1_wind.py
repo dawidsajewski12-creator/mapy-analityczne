@@ -10,6 +10,7 @@ from scipy.ndimage import zoom
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 
+
 def main(config):
     """Główna funkcja obliczająca przepływ wiatru"""
     print("\n--- Uruchamianie Skryptu 1: Symulacja Przepływu Wiatru ---")
@@ -51,8 +52,27 @@ def main(config):
         traceback.print_exc()
         return False
 
+
+def _crop_to_min_shape(arrays):
+    """Przytnij listę tablic do najmniejszego wspólnego kształtu (po przekątnej).
+    Zwraca nowe (przycięte) tablice w takiej samej kolejności.
+    """
+    shapes = [a.shape for a in arrays]
+    min_h = min(s[0] for s in shapes)
+    min_w = min(s[1] for s in shapes)
+    cropped = [a[:min_h, :min_w] for a in arrays]
+    return cropped
+
+
 def compute_flow_field_with_buffer(config, wind_speed, wind_dir):
-    """Oblicza pole przepływu z obszarem buforowym dla natarcia wiatru"""
+    """Oblicza pole przepływu z obszarem buforowym dla natarcia wiatru
+
+    Zabezpieczenia:
+    - Przycinanie skalowanych rastrów do najmniejszego wspólnego kształtu, aby
+      uniknąć błędów broadcastingu (ValueError: operands could not be broadcast).
+    - Jeżeli końcowe powiększone pole jest mniejsze niż obszar bazowy -> przycinamy
+      wynik do dostępnego rozmiaru i zgłaszamy ostrzeżenie.
+    """
     print("-> Przygotowywanie danych z jednolitą rozdzielczością...")
     
     # Używamy NMT jako bazowego rastra (lepsza rozdzielczość)
@@ -63,7 +83,7 @@ def compute_flow_field_with_buffer(config, wind_speed, wind_dir):
         base_height = nmt_src.height
         base_width = nmt_src.width
         resolution = base_transform.a  # rozdzielczość piksela
-        
+    
     print(f"  -> Bazowa rozdzielczość: {resolution:.2f}m, wymiary: {base_height}x{base_width}")
     
     # Wczytaj i dopasuj budynki do rozdzielczości NMT
@@ -72,7 +92,6 @@ def compute_flow_field_with_buffer(config, wind_speed, wind_dir):
     if os.path.exists(config['paths']['output_buildings_raster']):
         with rasterio.open(config['paths']['output_buildings_raster']) as bld_src:
             buildings_orig = bld_src.read(1)
-            
             # Resampling budynków do rozdzielczości NMT
             reproject(
                 source=buildings_orig,
@@ -105,36 +124,45 @@ def compute_flow_field_with_buffer(config, wind_speed, wind_dir):
     buildings_extended = np.pad(buildings_resampled, ((buffer_y, buffer_y), (buffer_x, buffer_x)), 
                                 mode='constant', constant_values=0)  # brak budynków w buforze
     
-    # Przeskaluj dla wydajności obliczeń (co 4 piksel)
+    # Przeskaluj dla wydajności obliczeń (co scale pikseli)
     scale = 4
-    h_scaled = total_height // scale
-    w_scaled = total_width // scale
-    
+
+    # Skalowanie przez wybieranie co 'scale'-tego piksela (szybsze), ale może dawać
+    # różne wymiary (ceil vs floor). Budujemy zabezpieczenie — przycinamy do najmniejszego kształtu.
     nmt_scaled = nmt_extended[::scale, ::scale]
     buildings_scaled = buildings_extended[::scale, ::scale]
-    
+
+    # Przytnij do najmniejszego wspólnego kształtu, żeby uniknąć broadcasting error
+    nmt_scaled, buildings_scaled = _crop_to_min_shape([nmt_scaled, buildings_scaled])
+
+    h_scaled, w_scaled = nmt_scaled.shape
+    print(f"  -> Scaled shapes: {h_scaled}x{w_scaled} (scale={scale})")
+
     # Normalizacja terenu
     terrain_min = np.min(nmt_scaled)
     terrain_max = np.max(nmt_scaled)
     if terrain_max > terrain_min:
-        # Teren wpływa na prędkość (wyżej = szybciej)
         terrain_factor = 0.7 + 0.3 * (nmt_scaled - terrain_min) / (terrain_max - terrain_min)
     else:
         terrain_factor = np.ones((h_scaled, w_scaled))
-    
+
     # Przeszkody
     obstacles = buildings_scaled > 0
-    
+
     # INICJALIZACJA PÓL PRĘDKOŚCI
     u = np.ones((h_scaled, w_scaled)) * wind_speed * np.cos(wind_dir)
     v = np.ones((h_scaled, w_scaled)) * wind_speed * np.sin(wind_dir)
-    
+
+    # Upewnij się, że terrain_factor pasuje do u/v (dodatkowe zabezpieczenie)
+    if terrain_factor.shape != u.shape:
+        print("  -> Uwaga: dopasowuję kształt terrain_factor do pól prędkości (przycinanie).")
+        terrain_factor = terrain_factor[:u.shape[0], :u.shape[1]]
+
     # Modulacja terenu
     u *= terrain_factor
     v *= terrain_factor
     
     # WARUNKI BRZEGOWE - natarcie wiatru
-    # Określ z której strony wieje wiatr
     wind_from_west = np.cos(wind_dir) > 0
     wind_from_east = np.cos(wind_dir) < 0
     wind_from_south = np.sin(wind_dir) > 0
@@ -146,10 +174,9 @@ def compute_flow_field_with_buffer(config, wind_speed, wind_dir):
     if wind_from_south: print("z południa", end=" ")
     if wind_from_north: print("z północy", end=" ")
     print()
-    
+
     # SOLVER CFD
     print("  -> Rozwiązywanie równań przepływu (50 iteracji)...")
-    
     for iteration in range(50):
         u_old = u.copy()
         v_old = v.copy()
@@ -213,13 +240,44 @@ def compute_flow_field_with_buffer(config, wind_speed, wind_dir):
         v = alpha * v + (1 - alpha) * v_old
     
     # Przeskaluj do pełnej rozdzielczości
-    u_full = zoom(u, scale, order=1)[:total_height, :total_width]
-    v_full = zoom(v, scale, order=1)[:total_height, :total_width]
-    
-    # WYTNIJ OBSZAR WŁAŚCIWY (bez bufora)
-    u_final = u_full[buffer_y:buffer_y+base_height, buffer_x:buffer_x+base_width]
-    v_final = v_full[buffer_y:buffer_y+base_height, buffer_x:buffer_x+base_width]
-    
+    u_full = zoom(u, scale, order=1)
+    v_full = zoom(v, scale, order=1)
+
+    # Bezpieczne przycinanie/obsługa, jeśli powiększone pole jest mniejsze niż oczekiwane
+    available_h, available_w = u_full.shape
+    if available_h < total_height or available_w < total_width:
+        print("  -> Uwaga: powiększone pole ma mniejsze wymiary niż oczekiwano po skalowaniu.")
+        print(f"     oczekiwano: {total_height}x{total_width}, dostępne: {available_h}x{available_w}")
+
+    # Wyznacz rozmiary, które da się wyciąć (przycinamy do dostępnego)
+    usable_h = min(available_h, total_height)
+    usable_w = min(available_w, total_width)
+
+    # Przytnij u_full/v_full do 'usable' (zachowując lewy-górny układ zgodny z paddingiem)
+    u_full = u_full[:usable_h, :usable_w]
+    v_full = v_full[:usable_h, :usable_w]
+
+    # WYTNIJ OBSZAR WŁAŚCIWY (bez bufora) - przycinamy, jeżeli trzeba
+    start_y = buffer_y
+    start_x = buffer_x
+    end_y = start_y + base_height
+    end_x = start_x + base_width
+
+    # Jeśli nie możemy w pełni wyciąć oryginalnego obszaru, przycinamy do dostępnego
+    if end_y > u_full.shape[0] or end_x > u_full.shape[1]:
+        max_h_possible = max(0, u_full.shape[0] - start_y)
+        max_w_possible = max(0, u_full.shape[1] - start_x)
+        print(f"  -> Przycinam wynik do mniejszego obszaru: {max_h_possible}x{max_w_possible} (z powodu ograniczeń skalowania)")
+        end_y = start_y + max_h_possible
+        end_x = start_x + max_w_possible
+
+    u_final = u_full[start_y:end_y, start_x:end_x]
+    v_final = v_full[start_y:end_y, start_x:end_x]
+
+    # Jeżeli wynik jest pusty (np. błąd skalowania), zwróć zero-macierz i zgłoś błąd
+    if u_final.size == 0 or v_final.size == 0:
+        raise RuntimeError("Końcowe pola prędkości są puste po operacjach skalowania/przycinania.")
+
     # Wygładź końcowe pole
     u_final = ndimage.gaussian_filter(u_final, sigma=1.0)
     v_final = ndimage.gaussian_filter(v_final, sigma=1.0)
@@ -228,12 +286,17 @@ def compute_flow_field_with_buffer(config, wind_speed, wind_dir):
     speed_final = np.sqrt(u_final**2 + v_final**2)
     
     print(f"  -> Zakres prędkości: {np.min(speed_final):.1f} - {np.max(speed_final):.1f} m/s")
-    print(f"  -> Średnia prędkość: {np.mean(speed_final[speed_final > 0]):.1f} m/s")
-    
-    # Bounds dla zapisu
-    bounds = rasterio.transform.array_bounds(base_height, base_width, base_transform)
+    nonzero_mask = speed_final > 0
+    if np.any(nonzero_mask):
+        print(f"  -> Średnia prędkość: {np.mean(speed_final[nonzero_mask]):.1f} m/s")
+    else:
+        print("  -> Średnia prędkość: 0.0 m/s (brak niezerowych pikseli)")
+
+    # Bounds dla zapisu -- dostosowane do wymiarów zwróconych pól
+    bounds = rasterio.transform.array_bounds(u_final.shape[0], u_final.shape[1], base_transform)
     
     return u_final, v_final, speed_final, base_transform, base_crs, bounds
+
 
 def save_wind_raster(u, v, speed, transform, crs, config):
     """Zapisuje pole wiatru jako raster wielokanałowy"""
@@ -259,6 +322,7 @@ def save_wind_raster(u, v, speed, transform, crs, config):
         dst.write(speed.astype('float32'), 3)
     
     print(f"  -> Zapisano pole wiatru: {output_path}")
+
 
 def generate_arrows(u, v, speed, transform, config, density=30):
     """Generuje punkty strzałek dla wizualizacji na mapie"""
@@ -291,6 +355,7 @@ def generate_arrows(u, v, speed, transform, config, density=30):
         json.dump(arrows, f, indent=2)
     
     print(f"  -> Wygenerowano {len(arrows)} strzałek wiatru")
+
 
 def create_wind_visualization(config):
     """Tworzy kolorową wizualizację prędkości wiatru"""
@@ -358,7 +423,7 @@ def create_wind_visualization(config):
             output_rgba, output_tiles
         ], check=True, capture_output=True, text=True)
         print("  -> Wygenerowano kafelki wiatru")
-    except:
+    except Exception:
         print("  -> Nie udało się wygenerować kafelków")
     
     return vmin, vmax
