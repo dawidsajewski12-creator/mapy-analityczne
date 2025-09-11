@@ -15,6 +15,25 @@
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
         
+        #wind-particles {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 600;
+        }
+
+        .particle {
+            position: absolute;
+            width: 2px;
+            height: 2px;
+            background-color: rgba(255, 255, 255, 0.7);
+            border-radius: 50%;
+            pointer-events: none;
+        }
+
         .weather-widget {
             position: absolute;
             top: 20px;
@@ -26,27 +45,45 @@
             border-radius: 12px;
             box-shadow: 0 8px 32px rgba(0,0,0,0.1);
             border: 1px solid rgba(255,255,255,0.18);
-            display: flex;
+            display: none; /* Ukryty na początku */
             align-items: center;
             gap: 15px;
             font-size: 14px;
             z-index: 1000;
             animation: fadeInScale 0.3s ease-out;
+            color: #334155;
+            flex-wrap: wrap;
         }
-        
-        .weather-item {
+
+        .weather-main {
             display: flex;
             align-items: center;
-            gap: 5px;
-            color: #334155;
+            gap: 10px;
+            border-right: 1px solid #e2e8f0;
+            padding-right: 15px;
         }
-        
         .weather-icon {
-            font-size: 18px;
+            width: 40px;
+            height: 40px;
         }
-        
-        .weather-value {
+        .weather-temp {
+            font-size: 24px;
             font-weight: 600;
+            color: #1e40af;
+        }
+        .weather-desc {
+            text-transform: capitalize;
+            font-size: 14px;
+        }
+        .weather-details {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+         .weather-details span {
+            font-size: 12px;
+        }
+        .weather-details strong {
             color: #1e40af;
         }
         
@@ -76,97 +113,24 @@
             color: #1e40af !important;
         }
         
-        .legend {
-            background: rgba(255,255,255,0.95);
-            backdrop-filter: blur(10px);
-            padding: 15px;
-            border-radius: 12px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-            border: 1px solid rgba(255,255,255,0.18);
-            max-width: 300px;
-            font-size: 13px;
-        }
-        
-        .legend .title {
-            font-weight: 600;
-            margin-bottom: 10px;
-            text-align: center;
-            font-size: 16px;
-            color: #1e40af;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        .legend i {
-            width: 18px;
-            height: 18px;
-            float: left;
-            margin-right: 10px;
-            border-radius: 3px;
-            border: 1px solid rgba(0,0,0,0.1);
-            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
-        }
-        
-        .legend .gradient-bar {
-            width: 100%;
-            height: 20px;
-            margin: 10px 0;
-            border-radius: 4px;
-            border: 1px solid rgba(0,0,0,0.1);
-        }
-        
-        .legend .gradient-labels {
-            display: flex;
-            justify-content: space-between;
-            font-size: 11px;
-            color: #666;
-        }
-        
-        .leaflet-popup-content-wrapper {
-            border-radius: 12px;
-            background: rgba(255,255,255,0.95);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255,255,255,0.18);
-        }
-        
-        .legend, .leaflet-control-layers {
-            animation: fadeInScale 0.3s ease-out;
-        }
-        
         @keyframes fadeInScale {
             from {
                 opacity: 0;
-                transform: scale(0.9);
+                transform: translateX(-50%) scale(0.9);
             }
             to {
                 opacity: 1;
-                transform: scale(1);
+                transform: translateX(-50%) scale(1);
             }
         }
     </style>
 </head>
 <body>
+
 <div id="map"></div>
-<div class="weather-widget" id="weatherWidget" style="display:none;">
-    <div class="weather-item">
-        <span class="weather-icon">🌡️</span>
-        <span id="temperature" class="weather-value">--</span>°C
-    </div>
-    <div class="weather-item">
-        <span class="weather-icon">💧</span>
-        <span id="humidity" class="weather-value">--</span>%
-    </div>
-    <div class="weather-item">
-        <span class="weather-icon">💨</span>
-        <span id="windSpeed" class="weather-value">--</span> m/s
-    </div>
-    <div class="weather-item">
-        <span class="weather-icon">🧭</span>
-        <span id="windDirection" class="weather-value">--</span>°
-    </div>
-</div>
+<div id="weather-widget" class="weather-widget"></div>
+
 <script>
-// KOMPLETNY I POPRAWNY KOD DO WKLEJENIA
     const map = L.map('map').setView([54.16, 19.40], 13);
     const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -180,12 +144,14 @@
     const nmtLayer = L.tileLayer('/mapy-analityczne/wyniki/kafelki/nmt/{z}/{x}/{y}.png', { attribution: 'NMT © GUGiK' });
     const nmptLayer = L.tileLayer('/mapy-analityczne/wyniki/kafelki/nmpt/{z}/{x}/{y}.png', { attribution: 'NMPT © GUGiK' });
     const buildingsLayer = L.tileLayer('/mapy-analityczne/wyniki/kafelki/buildings/{z}/{x}/{y}.png', { attribution: 'Budynki © GUGiK' });
+    const windLayer = L.layerGroup(); // Pusta warstwa jako przełącznik dla animacji wiatru
 
     const overlayMaps = {
         "Pokrycie terenu": landcoverLayer,
         "NMT": nmtLayer,
         "NMPT": nmptLayer,
-        "Budynki": buildingsLayer
+        "Budynki": buildingsLayer,
+        "Wiatr": windLayer
     };
 
     landcoverLayer.addTo(map);
@@ -193,7 +159,12 @@
 
     function displayWeatherData() {
         fetch('/mapy-analityczne/wyniki/weather.json')
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Błąd sieci: ' + response.statusText);
+                }
+                return response.json();
+            })
             .then(data => {
                 const widget = document.getElementById('weather-widget');
                 const iconUrl = `https://openweathermap.org/img/wn/${data.weather[0].icon}@2x.png`;
@@ -213,12 +184,12 @@
                     <div class="weather-main">
                         <img src="${iconUrl}" alt="${data.weather[0].description}" class="weather-icon">
                         <div class="weather-temp">${Math.round(data.main.temp)}°C</div>
-                        <div class="weather-desc">${data.weather[0].description}</div>
                     </div>
                     <div class="weather-details">
-                        <span>Odczuwalna: <strong>${Math.round(data.main.feels_like)}°C</strong></span>
-                        <span>Wiatr: <strong>${(data.wind.speed * 3.6).toFixed(1)} km/h ${windDirection}</strong></span>
-                        <span>Wilgotność: <strong>${data.main.humidity}%</strong></span>
+                         <span>${data.weather[0].description}</span>
+                         <span>Odczuwalna: <strong>${Math.round(data.main.feels_like)}°C</strong></span>
+                         <span>Wiatr: <strong>${(data.wind.speed * 3.6).toFixed(1)} km/h ${windDirection}</strong></span>
+                         <span>Wilgotność: <strong>${data.main.humidity}%</strong></span>
                     </div>
                 `;
                 widget.style.display = 'flex';
@@ -228,8 +199,12 @@
 
     displayWeatherData();
 
-    let particles = [];
     let animationFrame;
+    let particles = [];
+    const windPane = L.DomUtil.create('div', 'leaflet-pane leaflet-overlay-pane');
+    windPane.id = 'wind-particles';
+    map.getPanes().overlayPane.appendChild(windPane);
+    
     function showWindAnimation() {
         fetch('/mapy-analityczne/wyniki/wind_arrows.json')
             .then(response => response.json())
@@ -254,7 +229,41 @@
                     particles.push(p);
                 }
                 
-                animate(arrows);
+                function animate() {
+                    particles.forEach(p => {
+                        let closestArrow = null;
+                        let minDist = Infinity;
+                        
+                        arrows.forEach(a => {
+                            const dist = Math.sqrt(Math.pow(a.x - p.x, 2) + Math.pow(a.y - p.y, 2));
+                            if (dist < minDist) {
+                                minDist = dist;
+                                closestArrow = a;
+                            }
+                        });
+                        
+                        if (closestArrow && minDist < 0.01) {
+                            p.x += closestArrow.u * 0.00001;
+                            p.y += closestArrow.v * 0.00001;
+                        }
+                        
+                        p.life--;
+                        if (p.life <= 0) {
+                            const arrow = arrows[Math.floor(Math.random() * arrows.length)];
+                            p.x = arrow.x;
+                            p.y = arrow.y;
+                            p.life = 100;
+                        }
+                        
+                        const point = map.latLngToContainerPoint([p.y, p.x]);
+                        p.element.style.left = point.x + 'px';
+                        p.element.style.top = point.y + 'px';
+                        p.element.style.opacity = p.life / 100;
+                    });
+                    
+                    animationFrame = requestAnimationFrame(animate);
+                }
+                animate();
             })
             .catch(error => console.error('Błąd ładowania danych o wietrze:', error));
     }
@@ -269,56 +278,10 @@
         if (e.name === "Wiatr" && animationFrame) {
             cancelAnimationFrame(animationFrame);
             document.getElementById('wind-particles').innerHTML = '';
-        }
-    });
-    
-    function animate(arrows) {
-        particles.forEach(p => {
-            let closestArrow = null;
-            let minDist = Infinity;
-            
-            arrows.forEach(a => {
-                const dist = Math.sqrt(Math.pow(a.x - p.x, 2) + Math.pow(a.y - p.y, 2));
-                if (dist < minDist) {
-                    minDist = dist;
-                    closestArrow = a;
-                }
-            });
-            
-            if (closestArrow && minDist < 0.01) {
-                p.x += closestArrow.u * 0.00001;
-                p.y += closestArrow.v * 0.00001;
-            }
-            
-            p.life--;
-            if (p.life <= 0) {
-                const arrow = arrows[Math.floor(Math.random() * arrows.length)];
-                p.x = arrow.x;
-                p.y = arrow.y;
-                p.life = 100;
-            }
-            
-            const point = map.latLngToContainerPoint([p.y, p.x]);
-            p.element.style.left = point.x + 'px';
-            p.element.style.top = point.y + 'px';
-            p.element.style.opacity = p.life / 100;
-        });
-        
-        animationFrame = requestAnimationFrame(() => animate(arrows));
-    }
-        }
-        
-        animate();
-    }
-    
-    // Pokaż kontrolkę wiatru jeśli są dane
-    loadWindArrows().then(arrows => {
-        if (arrows) {
-            document.getElementById('windControl').style.display = 'block';
+            particles = [];
         }
     });
 </script>
+
 </body>
 </html>
-
-
