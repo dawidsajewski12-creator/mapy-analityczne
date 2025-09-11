@@ -117,4 +117,180 @@
             }
             
             // Podstawowy wektor wiatru
-            let bazowyWektor = p5.Vector.from
+            let bazowyWektor = p5.Vector.fromAngle(kierunekWiatruRad);
+            
+            // Dodanie zakłóceń na podstawie pozycji
+            let katZaklocenia = noise(this.x * 0.004, this.y * 0.004, frameCount * 0.01) * TWO_PI * ZAKLOCENIE_WIATRU;
+            let wektorZaklocenia = p5.Vector.fromAngle(katZaklocenia);
+            
+            // Kombinacja wiatru podstawowego i zakłóceń
+            bazowyWektor.add(wektorZaklocenia).normalize().mult(predkoscWiatru);
+            this.predkosc.add(bazowyWektor).limit(predkoscWiatru * 1.5);
+
+            // Aktualizacja pozycji
+            this.x += this.predkosc.x;
+            this.y += this.predkosc.y;
+            
+            // Kolizja z budynkami
+            for (let bud of budynki) {
+                if (this.x > bud.x && this.x < bud.x + bud.w && 
+                    this.y > bud.y && this.y < bud.y + bud.h) {
+                    // Odbicie od budynku zamiast resetu
+                    if (this.x - this.predkosc.x <= bud.x || this.x - this.predkosc.x >= bud.x + bud.w) {
+                        this.predkosc.x *= -0.3;
+                    }
+                    if (this.y - this.predkosc.y <= bud.y || this.y - this.predkosc.y >= bud.y + bud.h) {
+                        this.predkosc.y *= -0.3;
+                    }
+                    // Przesuń cząsteczkę poza budynek
+                    this.x = constrain(this.x, 0, width);
+                    this.y = constrain(this.y, 0, height);
+                }
+            }
+            
+            // Historia dla efektu smugi
+            this.historia.push(createVector(this.x, this.y));
+            if (this.historia.length > 20) { 
+                this.historia.splice(0, 1); 
+            }
+            
+            // Reset jeśli wyszła poza ekran
+            if (this.x > width + 50 || this.x < -50 || this.y > height + 50 || this.y < -50) { 
+                this.reset(); 
+            }
+        }
+        
+        show() {
+            // Rysowanie smugi
+            if (this.historia.length > 1) {
+                noFill();
+                beginShape();
+                noFill();
+                for (let i = 0; i < this.historia.length; i++) {
+                    let pos = this.historia[i];
+                    let alpha = map(i, 0, this.historia.length - 1, 0, 120);
+                    let thickness = map(i, 0, this.historia.length - 1, 0.5, 2);
+                    stroke(200, 220, 255, alpha);
+                    strokeWeight(thickness);
+                    if (i === 0) {
+                        curveVertex(pos.x, pos.y);
+                    }
+                    curveVertex(pos.x, pos.y);
+                    if (i === this.historia.length - 1) {
+                        curveVertex(pos.x, pos.y);
+                    }
+                }
+                endShape();
+            }
+            
+            // Rysowanie cząsteczki
+            fill(255, 200);
+            noStroke();
+            ellipse(this.x, this.y, 2, 2);
+        }
+    }
+
+    function setup() {
+        if (!daneSymulacji) {
+            console.error("Setup przerwany: dane nie zostały załadowane.");
+            return;
+        }
+
+        let canvasW = daneSymulacji.canvas_dimensions.width;
+        let canvasH = daneSymulacji.canvas_dimensions.height;
+        
+        // Dopasowanie rozmiaru do okna przeglądarki
+        let maxWidth = windowWidth * 0.95;
+        let maxHeight = windowHeight * 0.95;
+        let scale = min(maxWidth / canvasW, maxHeight / canvasH);
+        
+        canvasW *= scale;
+        canvasH *= scale;
+        
+        let canvas = createCanvas(canvasW, canvasH);
+        canvas.parent('main');
+        canvasCreated = true;
+        
+        // Skalowanie budynków
+        budynki = daneSymulacji.buildings.map(building => ({
+            x: building.x * scale,
+            y: building.y * scale,
+            w: building.w * scale,
+            h: building.h * scale
+        }));
+        
+        // Ustawienia wiatru
+        predkoscWiatru = max(0.5, daneSymulacji.weather.wind_speed / 3.0);
+        kierunekWiatruRad = radians(daneSymulacji.weather.wind_direction - 180);
+
+        // Informacje pogodowe
+        infoBox = document.getElementById('info-box');
+        infoBox.innerHTML = `
+            Dane pogodowe: ${daneSymulacji.weather.temperature}°C, 
+            wiatr ${daneSymulacji.weather.wind_speed} m/s, 
+            kierunek ${daneSymulacji.weather.wind_direction}°
+            <br>Cząsteczek: ${LICZBA_CZASTECZEK}
+        `;
+
+        // Tworzenie cząsteczek
+        for (let i = 0; i < LICZBA_CZASTECZEK; i++) {
+            czasteczki.push(new Czasteczka());
+        }
+    }
+
+    function draw() {
+        if (!daneSymulacji || !canvasCreated) return;
+
+        // Tło z efektem smugi
+        background(10, 15, 30, 25);
+        
+        // Rysowanie budynków
+        fill(20, 30, 50, 200);
+        stroke(80, 120, 160);
+        strokeWeight(1);
+        for (let bud of budynki) {
+            rect(bud.x, bud.y, bud.w, bud.h, 2);
+        }
+        
+        // Aktualizacja i rysowanie cząsteczek
+        for (let cz of czasteczki) {
+            cz.update();
+            cz.show();
+        }
+        
+        // Wskaźnik kierunku wiatru
+        push();
+        translate(width - 80, 80);
+        stroke(255, 100);
+        strokeWeight(2);
+        fill(255, 50);
+        ellipse(0, 0, 60, 60);
+        
+        // Strzałka kierunku wiatru
+        stroke(255, 200);
+        strokeWeight(3);
+        rotate(kierunekWiatruRad);
+        line(0, 0, 20, 0);
+        line(15, -5, 20, 0);
+        line(15, 5, 20, 0);
+        pop();
+    }
+
+    function windowResized() {
+        if (daneSymulacji && canvasCreated) {
+            setup(); // Przebuduj canvas przy zmianie rozmiaru okna
+        }
+    }
+
+    function keyPressed() {
+        if (key === ' ') {
+            // Spacja - restart symulacji
+            czasteczki = [];
+            for (let i = 0; i < LICZBA_CZASTECZEK; i++) {
+                czasteczki.push(new Czasteczka());
+            }
+        }
+    }
+</script>
+</body>
+</html>
