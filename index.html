@@ -1,490 +1,159 @@
 <!DOCTYPE html>
 <html lang="pl">
 <head>
-    <title>Mapy Analityczne - Pokrycie Terenu + NMT + NMPT + Budynki</title>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+    <meta charset="UTF-8">
+    <title>Dynamiczna Symulacja Wiatru</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
     <style>
-        html, body, #map { 
-            height: 100%; 
-            width: 100%; 
+        body { 
             margin: 0; 
-            background: linear-gradient(135deg, #1e3c72, #2a5298); 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden; 
+            background-color: #0A0F1E; /* Ciemniejsze tło */
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         }
-        
-        .weather-widget {
+        main { 
+            box-shadow: 0 0 30px rgba(0,0,0,0.7); 
+            border: 1px solid #222;
+        }
+        .info {
             position: absolute;
-            top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(255,255,255,0.95);
-            backdrop-filter: blur(10px);
-            padding: 12px 20px;
-            border-radius: 12px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-            border: 1px solid rgba(255,255,255,0.18);
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            font-size: 14px;
-            z-index: 1000;
-            animation: fadeInScale 0.3s ease-out;
+            bottom: 10px;
+            left: 10px;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 12px;
+            background-color: rgba(0,0,0,0.3);
+            padding: 5px 10px;
+            border-radius: 5px;
         }
-        
-        .weather-item {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-            color: #334155;
-        }
-        
-        .weather-icon {
-            font-size: 18px;
-        }
-        
-        .weather-value {
-            font-weight: 600;
-            color: #1e40af;
-        }
-        
-        .leaflet-control-layers {
-            background: rgba(255,255,255,0.95) !important;
-            backdrop-filter: blur(10px);
-            border-radius: 12px !important;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.1) !important;
-            border: 1px solid rgba(255,255,255,0.18);
-            padding: 10px;
-            font-size: 14px;
-        }
-        
-        .leaflet-control-layers-toggle {
-            background-color: rgba(59, 130, 246, 0.9) !important;
-            border-radius: 8px;
-        }
-        
-        .leaflet-control-layers label {
-            color: #334155 !important;
-            font-weight: 500;
-            cursor: pointer;
-            transition: color 0.2s ease;
-        }
-        
-        .leaflet-control-layers label:hover {
-            color: #1e40af !important;
-        }
-        
-        .legend {
-            background: rgba(255,255,255,0.95);
-            backdrop-filter: blur(10px);
-            padding: 15px;
-            border-radius: 12px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-            border: 1px solid rgba(255,255,255,0.18);
-            max-width: 300px;
-            font-size: 13px;
-        }
-        
-        .legend .title {
-            font-weight: 600;
-            margin-bottom: 10px;
-            text-align: center;
-            font-size: 16px;
-            color: #1e40af;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        .legend i {
-            width: 18px;
-            height: 18px;
-            float: left;
-            margin-right: 10px;
-            border-radius: 3px;
-            border: 1px solid rgba(0,0,0,0.1);
-            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
-        }
-        
-        .legend .gradient-bar {
-            width: 100%;
-            height: 20px;
-            margin: 10px 0;
-            border-radius: 4px;
-            border: 1px solid rgba(0,0,0,0.1);
-        }
-        
-        .legend .gradient-labels {
-            display: flex;
-            justify-content: space-between;
-            font-size: 11px;
-            color: #666;
-        }
-        
-        .leaflet-popup-content-wrapper {
-            border-radius: 12px;
-            background: rgba(255,255,255,0.95);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255,255,255,0.18);
-        }
-        
-        .legend, .leaflet-control-layers {
-            animation: fadeInScale 0.3s ease-out;
-        }
-        
-        @keyframes fadeInScale {
-            from {
-                opacity: 0;
-                transform: scale(0.9);
-            }
-            to {
-                opacity: 1;
-                transform: scale(1);
-            }
+        .loader {
+            color: white;
+            font-size: 20px;
         }
     </style>
 </head>
 <body>
-<div id="map"></div>
-<div class="weather-widget" id="weatherWidget" style="display:none;">
-    <div class="weather-item">
-        <span class="weather-icon">🌡️</span>
-        <span id="temperature" class="weather-value">--</span>°C
-    </div>
-    <div class="weather-item">
-        <span class="weather-icon">💧</span>
-        <span id="humidity" class="weather-value">--</span>%
-    </div>
-    <div class="weather-item">
-        <span class="weather-icon">💨</span>
-        <span id="windSpeed" class="weather-value">--</span> m/s
-    </div>
-    <div class="weather-item">
-        <span class="weather-icon">🧭</span>
-        <span id="windDirection" class="weather-value">--</span>°
-    </div>
-</div>
+    <div id="loader" class="loader">Ładowanie danych symulacji...</div>
+    <main style="display: none;"></main> <div id="info-box" class="info" style="display: none;"></div>
+
 <script>
-    const map = L.map('map', {
-        zoomControl: false
-    }).setView([54.16, 19.40], 13);
+    // --- USTAWIENIA SYMULACJI ---
+    const LICZBA_CZASTECZEK = 2500;
+    const ZAKLOCENIE_WIATRU = 0.5; // Jak bardzo wiatr jest "burzliwy"
     
-    L.control.zoom({
-        position: 'topright'
-    }).addTo(map);
-    
-    // Ciemna mapa bazowa
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        attribution: '© OpenStreetMap contributors, © CARTO',
-        maxZoom: 19
-    }).addTo(map);
+    let daneSymulacji;
+    let budynki = [];
+    let czasteczki = [];
+    let predkoscWiatru = 1;
+    let kierunekWiatruRad = 0;
+    let infoBox;
 
-const landcoverLayer = L.tileLayer('/mapy-analityczne/wyniki/kafelki/landcover/{z}/{x}/{y}.png', { attribution: 'Pokrycie terenu © GUGiK' });
-const nmtLayer = L.tileLayer('/mapy-analityczne/wyniki/kafelki/nmt/{z}/{x}/{y}.png', { attribution: 'NMT © GUGiK' });
-const nmptLayer = L.tileLayer('/mapy-analityczne/wyniki/kafelki/nmpt/{z}/{x}/{y}.png', { attribution: 'NMPT © GUGiK' });
-const buildingsLayer = L.tileLayer('/mapy-analityczne/wyniki/kafelki/buildings/{z}/{x}/{y}.png', { attribution: 'Budynki © GUGiK' });;
-    
-    const layerControl = L.control.layers(null, overlayLayers, { 
-        collapsed: false,
-        position: 'topleft'
-    }).addTo(map);
-
-    const legendControl = L.control({ position: "bottomright" });
-    legendControl.onAdd = function() {
-        const div = L.DomUtil.create("div", "legend-placeholder");
-        return div;
-    };
-    legendControl.addTo(map);
-
-    function createLandcoverLegend() {
-        const div = L.DomUtil.create("div", "legend");
-        const items = {
-            'Nawierzchnie utwardzone': 'linear-gradient(45deg, #a9a9a9, #808080)',
-            'Budynki': 'linear-gradient(45deg, #dc143c, #b91c3c)',
-            'Drzewa / Lasy': 'linear-gradient(45deg, #228b22, #166b16)',
-            'Trawa / Tereny zielone': 'linear-gradient(45deg, #7cfc00, #65d000)',
-            'Gleba / Nieużytki': 'linear-gradient(45deg, #d2b48c, #c19a6b)',
-            'Woda': 'linear-gradient(45deg, #1e90ff, #0066cc)'
-        };
-        let labels = '<div class="title">Pokrycie terenu</div>';
-        for (const [key, gradient] of Object.entries(items)) {
-            labels += `<div style="margin-bottom: 8px;"><i style="background:${gradient}"></i>${key}</div>`;
-        }
-        div.innerHTML = labels;
-        return div;
+    function preload() {
+        let url = 'wyniki/simulation_data.json';
+        daneSymulacji = loadJSON(url, onDataLoaded, onDataError);
     }
 
-    function createElevationLegend(title, colormap) {
-        const div = L.DomUtil.create("div", "legend");
-        let gradient;
-        
-        if (colormap === 'terrain') {
-            gradient = 'linear-gradient(to right, #333447 0%, #3b6829 25%, #8b7c4c 50%, #d9d0a8 75%, #ffffff 100%)';
-        } else if (colormap === 'viridis') {
-            gradient = 'linear-gradient(to right, #440154 0%, #31688e 33%, #35b779 66%, #fde725 100%)';
-        } else if (colormap === 'hot') {
-            gradient = 'linear-gradient(to right, #0b0000 0%, #aa0000 25%, #ff5500 50%, #ffaa00 75%, #ffffff 100%)';
-        }
-        
-        let html = `<div class="title">${title}</div>`;
-        html += `<div class="gradient-bar" style="background: ${gradient};"></div>`;
-        html += '<div class="gradient-labels"><span>Min</span><span>Max</span></div>';
-        html += '<div style="text-align: center; margin-top: 5px; font-size: 11px; color: #888;">Wysokość [m]</div>';
-        
-        div.innerHTML = html;
-        return div;
+    function onDataLoaded() {
+        console.log("Dane pomyślnie załadowane.");
+        document.getElementById('loader').style.display = 'none';
+        document.querySelector('main').style.display = 'block';
+        document.getElementById('info-box').style.display = 'block';
     }
 
-    let activeLayers = new Set();
+    function onDataError() {
+        console.error("Błąd ładowania pliku simulation_data.json");
+        document.getElementById('loader').innerText = 'Błąd: Nie można załadować danych symulacji. Sprawdź, czy plik istnieje i czy skrypt backendowy działa poprawnie.';
+    }
 
-    map.on('overlayadd', (e) => {
-        activeLayers.add(e.name);
-        updateLegend();
-    });
-
-    map.on('overlayremove', (e) => {
-        activeLayers.delete(e.name);
-        updateLegend();
-    });
-    
-    function updateLegend() {
-        const placeholder = document.querySelector('.legend-placeholder');
-        placeholder.innerHTML = "";
-        
-        // Wyświetl tylko jedną legendę - priorytet: NMPT > NMT > Budynki > Pokrycie
-        if (activeLayers.has("🏙️ NMPT (Model Pokrycia)")) {
-            placeholder.appendChild(createElevationLegend("NMPT - Model Pokrycia", "viridis"));
-        } else if (activeLayers.has("🏔️ NMT (Model Terenu)")) {
-            placeholder.appendChild(createElevationLegend("NMT - Model Terenu", "terrain"));
-        } else if (activeLayers.has("🏢 Budynki (wysokość)")) {
-            placeholder.appendChild(createElevationLegend("Wysokość Budynków", "hot"));
-        } else if (activeLayers.has("🏗️ Pokrycie terenu")) {
-            placeholder.appendChild(createLandcoverLegend());
+    class Czasteczka {
+        constructor() { this.reset(); }
+        reset() { 
+            this.x = random(width); 
+            this.y = random(height); 
+            this.historia = [];
+            this.predkosc = createVector(0,0);
         }
-    }
-    
-    // Domyślnie włącz pokrycie terenu
-    overlayLayers["🏗️ Pokrycie terenu"].addTo(map);
-    activeLayers.add("🏗️ Pokrycie terenu");
-    updateLegend();
-    
-    // Pobierz i wyświetl dane pogodowe
-    async function loadWeatherData() {
-        try {
-            const response = await fetch('./wyniki/weather.json');
-            if (response.ok) {
-                const data = await response.json();
-                document.getElementById('temperature').textContent = data.temperature;
-                document.getElementById('humidity').textContent = data.humidity;
-                document.getElementById('windSpeed').textContent = data.wind_speed;
-                document.getElementById('windDirection').textContent = data.wind_direction;
-                document.getElementById('weatherWidget').style.display = 'flex';
-            }
-        } catch (error) {
-            console.log('Brak danych pogodowych');
-        }
-    }
-    
-    loadWeatherData();
-    
-    // Wind visualization
-    let windArrowsLayer = null;
-    let windParticles = [];
-    let animationFrame = null;
-    
-    async function loadWindArrows() {
-        try {
-             response = await fetch('./wyniki/wind_arrows.json');
-            if (!response.ok) {
-                console.log('Wind arrows file not found');
-                return null;
-            }
-            const data = await response.json();
-            console.log(`Loaded ${data.length} wind arrows`);
-            return data;
-        } catch (e) {
-            console.log('Error loading wind data:', e);
-            return null;
-        }
-    }
-    
-    // Sprawdź czy warstwa wiatru jest dostępna
-    async function checkWindLayer() {
-        try {
-            // Sprawdź czy istnieją kafelki
-            const testResponse = await fetch('./wyniki/kafelki/wind/11/1116/625.png', {method: 'HEAD'});
-            if (testResponse.ok) {
-                console.log('Wind tiles available');
-                return true;
-            }
-        } catch (e) {
-            console.log('Wind tiles not available');
-        }
-        return false;
-    }
-    
-    // Inicjalizacja - sprawdź dostępność warstw
-    checkWindLayer().then(hasWind => {
-        if (!hasWind) {
-            // Usuń warstwę wiatru z kontrolek jeśli nie ma danych
-            delete overlayLayers["🌬️ Prędkość wiatru"];
-            console.log('Wind layer removed - no data');
-        }
-    });
-    
-    function createWindArrow(arrow) {
-        const scale = Math.min(arrow.speed / 10, 1);
-        const angle = Math.atan2(arrow.v, arrow.u) * (180 / Math.PI);
-        
-        return L.marker([arrow.y, arrow.x], {
-            icon: L.divIcon({
-                html: `<div style="
-                    transform: rotate(${angle}deg);
-                    width: ${20 + scale * 20}px;
-                    height: 2px;
-                    background: linear-gradient(to right, 
-                        rgba(59, 130, 246, ${0.3 + scale * 0.7}),
-                        transparent);
-                    position: relative;
-                    ">
-                    <div style="
-                        position: absolute;
-                        right: 0;
-                        top: -3px;
-                        width: 0;
-                        height: 0;
-                        border-left: 8px solid rgba(59, 130, 246, ${0.3 + scale * 0.7});
-                        border-top: 4px solid transparent;
-                        border-bottom: 4px solid transparent;
-                    "></div>
-                </div>`,
-                className: 'wind-arrow',
-                iconSize: [40, 10]
-            })
-        });
-    }
-    
-    async function toggleWind() {
-        const button = document.getElementById('windToggle');
-        
-        if (windArrowsLayer) {
-            // Wyłącz
-            map.removeLayer(windArrowsLayer);
-            windArrowsLayer = null;
-            button.textContent = 'Włącz przepływ wiatru';
-            button.classList.remove('active');
+        update() {
+            let bazowyWektor = p5.Vector.fromAngle(kierunekWiatruRad);
+            let katZaklocenia = noise(this.x * 0.004, this.y * 0.004) * TWO_PI * ZAKLOCENIE_WIATRU;
+            let wektorZaklocenia = p5.Vector.fromAngle(katZaklocenia);
             
-            // Zatrzymaj animację
-            if (animationFrame) {
-                cancelAnimationFrame(animationFrame);
-                animationFrame = null;
-            }
+            bazowyWektor.add(wektorZaklocenia).normalize().mult(predkoscWiatru);
+            this.predkosc.add(bazowyWektor).limit(predkoscWiatru * 1.5);
+
+            this.x += this.predkosc.x;
+            this.y += this.predkosc.y;
             
-            // Usuń cząsteczki
-            document.querySelectorAll('.wind-particle').forEach(p => p.remove());
-            windParticles = [];
-        } else {
-            // Włącz
-            const arrows = await loadWindArrows();
-            if (!arrows) {
-                alert('Brak danych symulacji wiatru. Uruchom ponownie analizę.');
-                return;
-            }
-            
-            windArrowsLayer = L.layerGroup();
-            arrows.forEach(arrow => {
-                if (arrow.speed > 0.5) {  // Pokaż tylko znaczące przepływy
-                    createWindArrow(arrow).addTo(windArrowsLayer);
+            for (let bud of budynki) {
+                if (this.x > bud.x && this.x < bud.x + bud.w && this.y > bud.y && this.y < bud.y + bud.h) {
+                    this.reset();
                 }
-            });
-            windArrowsLayer.addTo(map);
-            
-            button.textContent = 'Wyłącz przepływ wiatru';
-            button.classList.add('active');
-            
-            // Uruchom animację cząsteczek
-            startParticleAnimation(arrows);
+            }
+            this.historia.push(createVector(this.x, this.y));
+            if (this.historia.length > 30) { this.historia.splice(0, 1); }
+            if (this.x > width + 10 || this.x < -10 || this.y > height + 10 || this.y < -10) { this.reset(); }
+        }
+        show() {
+            noFill();
+            beginShape();
+            for (let i = 0; i < this.historia.length; i++) {
+                let pos = this.historia[i];
+                let alpha = map(i, 0, this.historia.length, 0, 180);
+                stroke(200, 220, 255, alpha);
+                vertex(pos.x, pos.y);
+            }
+            endShape();
+            fill(255);
+            noStroke();
+            ellipse(this.x, this.y, 2, 2);
         }
     }
-    
-    function startParticleAnimation(arrows) {
-        // Utwórz cząsteczki
-        for (let i = 0; i < 100; i++) {
-            const particle = document.createElement('div');
-            particle.className = 'wind-particle';
-            particle.style.cssText = `
-                position: absolute;
-                width: 3px;
-                height: 3px;
-                background: radial-gradient(circle, rgba(59,130,246,0.8), transparent);
-                border-radius: 50%;
-                pointer-events: none;
-                z-index: 500;
-                transition: all 0.1s linear;
-            `;
-            document.getElementById('map').appendChild(particle);
-            
-            // Losowa pozycja startowa
-            const arrow = arrows[Math.floor(Math.random() * arrows.length)];
-            windParticles.push({
-                element: particle,
-                x: arrow.x + (Math.random() - 0.5) * 0.001,
-                y: arrow.y + (Math.random() - 0.5) * 0.001,
-                life: Math.random() * 100
-            });
+
+    function setup() {
+        if (!daneSymulacji) {
+            console.error("Setup przerwany: dane nie zostały załadowane.");
+            let canvas = createCanvas(1, 1); // Stwórz minimalne płótno, aby uniknąć błędów
+            canvas.parent('main');
+            noLoop(); // Zatrzymaj pętlę draw()
+            return;
         }
+
+        let canvasW = daneSymulacji.canvas_dimensions.width;
+        let canvasH = daneSymulacji.canvas_dimensions.height;
+        let canvas = createCanvas(canvasW, canvasH);
+        canvas.parent('main');
         
-        // Funkcja animacji
-        function animate() {
-            windParticles.forEach(p => {
-                // Znajdź najbliższą strzałkę
-                let closestArrow = arrows[0];
-                let minDist = Infinity;
-                
-                arrows.forEach(a => {
-                    const dist = Math.sqrt(Math.pow(a.x - p.x, 2) + Math.pow(a.y - p.y, 2));
-                    if (dist < minDist) {
-                        minDist = dist;
-                        closestArrow = a;
-                    }
-                });
-                
-                // Przesuń cząsteczkę
-                if (closestArrow && minDist < 0.01) {
-                    p.x += closestArrow.u * 0.00001;
-                    p.y += closestArrow.v * 0.00001;
-                }
-                
-                // Zmniejsz życie
-                p.life--;
-                if (p.life <= 0) {
-                    // Reset cząsteczki
-                    const arrow = arrows[Math.floor(Math.random() * arrows.length)];
-                    p.x = arrow.x;
-                    p.y = arrow.y;
-                    p.life = 100;
-                }
-                
-                // Aktualizuj pozycję na mapie
-                const point = map.latLngToContainerPoint([p.y, p.x]);
-                p.element.style.left = point.x + 'px';
-                p.element.style.top = point.y + 'px';
-                p.element.style.opacity = p.life / 100;
-            });
-            
-            animationFrame = requestAnimationFrame(animate);
+        budynki = daneSymulacji.buildings;
+        predkoscWiatru = daneSymulacji.weather.wind_speed / 4.0;
+        kierunekWiatruRad = radians(daneSymulacji.weather.wind_direction - 180);
+
+        infoBox = document.getElementById('info-box');
+        infoBox.innerHTML = `Dane pogodowe: ${daneSymulacji.weather.temperature}°C, wiatr ${daneSymulacji.weather.wind_speed} m/s, kier. ${daneSymulacji.weather.wind_direction}°`;
+
+        for (let i = 0; i < LICZBA_CZASTECZEK; i++) {
+            czasteczki.push(new Czasteczka());
         }
-        
-        animate();
     }
-    
-    // Pokaż kontrolkę wiatru jeśli są dane
-    loadWindArrows().then(arrows => {
-        if (arrows) {
-            document.getElementById('windControl').style.display = 'block';
+
+    function draw() {
+        if (!daneSymulacji) return; // Nie rysuj nic, jeśli dane nie są gotowe
+
+        background(10, 15, 30, 180); // Dodanie przezroczystości dla efektu "smugi"
+        
+        fill(5, 8, 15, 200);
+        stroke(120);
+        for (let bud of budynki) {
+            rect(bud.x, bud.y, bud.w, bud.h);
         }
-    });
+        
+        for (let cz of czasteczki) {
+            cz.update();
+            cz.show();
+        }
+    }
 </script>
 </body>
 </html>
