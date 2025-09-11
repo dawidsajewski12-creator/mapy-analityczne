@@ -8,7 +8,7 @@
         body { 
             margin: 0; 
             overflow: hidden; 
-            background-color: #0A0F1E; /* Ciemniejsze tło */
+            background-color: #0A0F1E;
             display: flex; 
             justify-content: center; 
             align-items: center; 
@@ -37,12 +37,13 @@
 </head>
 <body>
     <div id="loader" class="loader">Ładowanie danych symulacji...</div>
-    <main style="display: none;"></main> <div id="info-box" class="info" style="display: none;"></div>
+    <main style="display: none;"></main>
+    <div id="info-box" class="info" style="display: none;"></div>
 
 <script>
     // --- USTAWIENIA SYMULACJI ---
     const LICZBA_CZASTECZEK = 2500;
-    const ZAKLOCENIE_WIATRU = 0.5; // Jak bardzo wiatr jest "burzliwy"
+    const ZAKLOCENIE_WIATRU = 0.5;
     
     let daneSymulacji;
     let budynki = [];
@@ -50,110 +51,70 @@
     let predkoscWiatru = 1;
     let kierunekWiatruRad = 0;
     let infoBox;
+    let canvasCreated = false;
 
     function preload() {
         let url = 'wyniki/simulation_data.json';
-        daneSymulacji = loadJSON(url, onDataLoaded, onDataError);
+        // Fallback do danych testowych w przypadku błędu
+        httpGet(url, 'json', onDataLoaded, onDataError);
     }
 
-    function onDataLoaded() {
-        console.log("Dane pomyślnie załadowane.");
+    function onDataLoaded(data) {
+        daneSymulacji = data;
+        console.log("Dane pomyślnie załadowane:", data);
         document.getElementById('loader').style.display = 'none';
         document.querySelector('main').style.display = 'block';
         document.getElementById('info-box').style.display = 'block';
     }
 
-    function onDataError() {
-        console.error("Błąd ładowania pliku simulation_data.json");
-        document.getElementById('loader').innerText = 'Błąd: Nie można załadować danych symulacji. Sprawdź, czy plik istnieje i czy skrypt backendowy działa poprawnie.';
+    function onDataError(error) {
+        console.error("Błąd ładowania pliku simulation_data.json:", error);
+        // Użyj danych testowych
+        daneSymulacji = {
+            canvas_dimensions: { width: 1200, height: 800 },
+            buildings: [
+                {x: 100, y: 100, w: 80, h: 60},
+                {x: 300, y: 200, w: 120, h: 80},
+                {x: 600, y: 150, w: 100, h: 100},
+                {x: 900, y: 300, w: 90, h: 70}
+            ],
+            weather: {
+                temperature: 15.0,
+                humidity: 60,
+                wind_speed: 5.0,
+                wind_direction: 270,
+                timestamp: new Date().toISOString()
+            }
+        };
+        
+        document.getElementById('loader').innerHTML = 'Używanie danych testowych (brak pliku simulation_data.json)';
+        setTimeout(() => {
+            document.getElementById('loader').style.display = 'none';
+            document.querySelector('main').style.display = 'block';
+            document.getElementById('info-box').style.display = 'block';
+        }, 1000);
     }
 
     class Czasteczka {
-        constructor() { this.reset(); }
+        constructor() { 
+            this.reset(); 
+        }
+        
         reset() { 
             this.x = random(width); 
             this.y = random(height); 
             this.historia = [];
-            this.predkosc = createVector(0,0);
+            this.predkosc = createVector(0, 0);
+            this.zycie = random(300, 600); // Czas życia cząsteczki
+            this.wiek = 0;
         }
+        
         update() {
-            let bazowyWektor = p5.Vector.fromAngle(kierunekWiatruRad);
-            let katZaklocenia = noise(this.x * 0.004, this.y * 0.004) * TWO_PI * ZAKLOCENIE_WIATRU;
-            let wektorZaklocenia = p5.Vector.fromAngle(katZaklocenia);
-            
-            bazowyWektor.add(wektorZaklocenia).normalize().mult(predkoscWiatru);
-            this.predkosc.add(bazowyWektor).limit(predkoscWiatru * 1.5);
-
-            this.x += this.predkosc.x;
-            this.y += this.predkosc.y;
-            
-            for (let bud of budynki) {
-                if (this.x > bud.x && this.x < bud.x + bud.w && this.y > bud.y && this.y < bud.y + bud.h) {
-                    this.reset();
-                }
+            this.wiek++;
+            if (this.wiek > this.zycie) {
+                this.reset();
+                return;
             }
-            this.historia.push(createVector(this.x, this.y));
-            if (this.historia.length > 30) { this.historia.splice(0, 1); }
-            if (this.x > width + 10 || this.x < -10 || this.y > height + 10 || this.y < -10) { this.reset(); }
-        }
-        show() {
-            noFill();
-            beginShape();
-            for (let i = 0; i < this.historia.length; i++) {
-                let pos = this.historia[i];
-                let alpha = map(i, 0, this.historia.length, 0, 180);
-                stroke(200, 220, 255, alpha);
-                vertex(pos.x, pos.y);
-            }
-            endShape();
-            fill(255);
-            noStroke();
-            ellipse(this.x, this.y, 2, 2);
-        }
-    }
-
-    function setup() {
-        if (!daneSymulacji) {
-            console.error("Setup przerwany: dane nie zostały załadowane.");
-            let canvas = createCanvas(1, 1); // Stwórz minimalne płótno, aby uniknąć błędów
-            canvas.parent('main');
-            noLoop(); // Zatrzymaj pętlę draw()
-            return;
-        }
-
-        let canvasW = daneSymulacji.canvas_dimensions.width;
-        let canvasH = daneSymulacji.canvas_dimensions.height;
-        let canvas = createCanvas(canvasW, canvasH);
-        canvas.parent('main');
-        
-        budynki = daneSymulacji.buildings;
-        predkoscWiatru = daneSymulacji.weather.wind_speed / 4.0;
-        kierunekWiatruRad = radians(daneSymulacji.weather.wind_direction - 180);
-
-        infoBox = document.getElementById('info-box');
-        infoBox.innerHTML = `Dane pogodowe: ${daneSymulacji.weather.temperature}°C, wiatr ${daneSymulacji.weather.wind_speed} m/s, kier. ${daneSymulacji.weather.wind_direction}°`;
-
-        for (let i = 0; i < LICZBA_CZASTECZEK; i++) {
-            czasteczki.push(new Czasteczka());
-        }
-    }
-
-    function draw() {
-        if (!daneSymulacji) return; // Nie rysuj nic, jeśli dane nie są gotowe
-
-        background(10, 15, 30, 180); // Dodanie przezroczystości dla efektu "smugi"
-        
-        fill(5, 8, 15, 200);
-        stroke(120);
-        for (let bud of budynki) {
-            rect(bud.x, bud.y, bud.w, bud.h);
-        }
-        
-        for (let cz of czasteczki) {
-            cz.update();
-            cz.show();
-        }
-    }
-</script>
-</body>
-</html>
+            
+            // Podstawowy wektor wiatru
+            let bazowyWektor = p5.Vector.from
