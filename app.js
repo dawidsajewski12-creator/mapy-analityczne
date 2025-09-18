@@ -1,6 +1,21 @@
 // Sample data from provided JSON
+
+// POPRAWIONA WERSJA - Funkcje do wizualizacji danych symulacji wiatru z prawidłowymi współrzędnymi
+
 // Zmienna globalna dla danych symulacji wiatru
 let windSimulationData = null;
+
+// WSPÓŁRZĘDNE SUWAŁK (gdzie wykonano symulację)
+const SIMULATION_CENTER = {
+    lat: 54.1118,
+    lng: 22.9309
+};
+
+// Rozmiar obszaru symulacji w stopniach (dostosowane do rzeczywistego rozmiaru symulacji)
+const SIMULATION_BOUNDS = {
+    width: 0.02,  // ~2.2 km w Suwałkach  
+    height: 0.01  // ~1.1 km w Suwałkach
+};
 
 // Funkcja do wczytania danych symulacji wiatru z GitHub
 async function loadWindSimulationData() {
@@ -12,8 +27,10 @@ async function loadWindSimulationData() {
         windSimulationData = await response.json();
         console.log('Dane symulacji wiatru załadowane:', windSimulationData.metadata);
 
-        // Po załadowaniu danych, zaktualizuj wizualizację wiatru jeśli mapa jest już zainicjalizowana
+        // Po załadowaniu danych, zaktualizuj mapę na Suwałki i pokaż wizualizację
         if (maps.wind) {
+            // Ustaw mapę na Suwałki gdzie wykonano symulację
+            maps.wind.setView([SIMULATION_CENTER.lat, SIMULATION_CENTER.lng], 15);
             updateWindVisualizationWithRealData();
         }
 
@@ -23,6 +40,279 @@ async function loadWindSimulationData() {
         return null;
     }
 }
+
+// Funkcja do konwersji współrzędnych lokalnych na geograficzne (Suwałki)
+function localToGeo(x, y) {
+    // Normalizuj do zakresu 0-1
+    const normalizedX = x / 20.0; // max X w danych
+    const normalizedY = y / 10.66; // max Y w danych
+
+    // Mapuj na obszar wokół Suwałk
+    const lat = SIMULATION_CENTER.lat - SIMULATION_BOUNDS.height/2 + normalizedY * SIMULATION_BOUNDS.height;
+    const lng = SIMULATION_CENTER.lng - SIMULATION_BOUNDS.width/2 + normalizedX * SIMULATION_BOUNDS.width;
+
+    return [lat, lng];
+}
+
+// Główna funkcja wizualizacji z rzeczywistymi danymi
+function updateWindVisualizationWithRealData() {
+    if (!maps.wind || !windSimulationData) return;
+
+    console.log('Aktualizacja wizualizacji wiatru z rzeczywistymi danymi...');
+
+    // Wyczyść istniejące warstwy
+    maps.wind.eachLayer(layer => {
+        if (layer instanceof L.Marker || layer instanceof L.Polyline || layer instanceof L.Circle) {
+            maps.wind.removeLayer(layer);
+        }
+    });
+
+    // Usuń istniejącą warstwę heatmap jeśli istnieje
+    if (window.currentHeatLayer) {
+        maps.wind.removeLayer(window.currentHeatLayer);
+    }
+
+    // Dodaj kontinuous heatmap prędkości wiatru
+    addContinuousWindHeatmap();
+
+    // Dodaj streamlines
+    addStreamlines();
+
+    // Dodaj particles jeśli włączone
+    const showParticlesCheckbox = document.getElementById('show-particles');
+    if (showParticlesCheckbox && showParticlesCheckbox.checked) {
+        addWindParticles();
+    }
+
+    // Dodaj wektory jeśli włączone
+    const showVectorsCheckbox = document.getElementById('show-vectors');
+    if (showVectorsCheckbox && showVectorsCheckbox.checked) {
+        addWindVectors();
+    }
+
+    // Dodaj informację o lokalizacji
+    addLocationInfo();
+}
+
+// KONTINUOUS HEATMAP - prawdziwa mapa cieplna
+function addContinuousWindHeatmap() {
+    const magnitudeGrid = windSimulationData.magnitude_grid;
+    const gridHeight = magnitudeGrid.length;
+    const gridWidth = magnitudeGrid[0].length;
+
+    console.log(`Tworzenie kontinuous heatmap ${gridWidth}x${gridHeight}...`);
+
+    // Przygotuj punkty dla leaflet heatmap
+    const heatPoints = [];
+
+    for (let i = 0; i < gridHeight; i++) {
+        for (let j = 0; j < gridWidth; j++) {
+            // Mapuj indeksy siatki na współrzędne lokalne
+            const localX = (j / (gridWidth - 1)) * 20.0;
+            const localY = (i / (gridHeight - 1)) * 10.66;
+
+            // Konwertuj na współrzędne geograficzne
+            const [lat, lng] = localToGeo(localX, localY);
+
+            const magnitude = magnitudeGrid[i][j];
+
+            // Normalizuj intensywność (0-1) względem maksymalnej prędkości
+            const maxMagnitude = windSimulationData.flow_statistics.max_magnitude;
+            const intensity = Math.min(magnitude / maxMagnitude, 1.0);
+
+            heatPoints.push([lat, lng, intensity]);
+        }
+    }
+
+    // Stwórz kontinuous heatmap z leaflet-heat
+    if (typeof L.heatLayer !== 'undefined') {
+        const heatOptions = {
+            radius: 30,           // Większy promień dla płynniejszego przejścia
+            blur: 25,            // Więcej rozmycia dla kontinuous efektu
+            maxZoom: 18,
+            max: 1.0,
+            gradient: {
+                0.0: '#0000FF',   // Niebieski - niska prędkość
+                0.2: '#00FFFF',   // Cyan
+                0.4: '#00FF00',   // Zielony  
+                0.6: '#FFFF00',   // Żółty
+                0.8: '#FF8000',   // Pomarańczowy
+                1.0: '#FF0000'    // Czerwony - wysoka prędkość
+            }
+        };
+
+        window.currentHeatLayer = L.heatLayer(heatPoints, heatOptions).addTo(maps.wind);
+
+        console.log(`Kontinuous heatmap utworzona z ${heatPoints.length} punktów`);
+    } else {
+        console.error('Plugin leaflet-heat nie jest załadowany!');
+        // Fallback - pokolorowane kółka (ale mniejsze i z większą przezroczystością)
+        addFallbackHeatmap(heatPoints);
+    }
+}
+
+// Fallback jeśli nie ma pluginu leaflet-heat
+function addFallbackHeatmap(heatPoints) {
+    console.log('Używam fallback heatmap...');
+
+    for (let i = 0; i < heatPoints.length; i += 4) { // Co 4-ty punkt żeby nie przeciążać
+        const [lat, lng, intensity] = heatPoints[i];
+
+        const color = getWindColorFromIntensity(intensity);
+
+        L.circle([lat, lng], {
+            color: color,
+            fillColor: color,
+            fillOpacity: 0.4,
+            weight: 0,
+            radius: 15
+        }).addTo(maps.wind);
+    }
+}
+
+// Funkcja dla streamlines z prawidłowymi współrzędnymi
+function addStreamlines() {
+    console.log(`Dodaję ${windSimulationData.streamlines.length} streamlines...`);
+
+    windSimulationData.streamlines.forEach((streamline, index) => {
+        const latlngs = streamline.map(point => localToGeo(point.x, point.y));
+
+        // Różne kolory dla różnych streamlines
+        const hue = (index * 40) % 360;
+
+        const polyline = L.polyline(latlngs, {
+            color: `hsl(${hue}, 70%, 50%)`,
+            weight: 3,
+            opacity: 0.9
+        }).addTo(maps.wind);
+
+        polyline.bindPopup(`
+            <strong>Streamline ${index + 1}</strong><br>
+            Punkty: ${streamline.length}<br>
+            Prędkość średnia: ${(streamline.reduce((sum, p) => sum + p.speed, 0) / streamline.length).toFixed(2)} m/s
+        `);
+    });
+}
+
+// Funkcja dla cząstek
+function addWindParticles() {
+    if (windSimulationData.particles.length > 0) {
+        console.log('Dodaję cząstki wiatru...');
+
+        // Użyj pierwszej grupy cząstek
+        const particleGroup = windSimulationData.particles[0];
+
+        particleGroup.forEach((particle, index) => {
+            const [lat, lng] = localToGeo(particle.x, particle.y);
+
+            const marker = L.circleMarker([lat, lng], {
+                radius: 4,
+                fillColor: getParticleColor(particle.speed),
+                color: '#000',
+                weight: 1,
+                opacity: 1,
+                fillOpacity: 0.8
+            }).bindPopup(`
+                <strong>Cząstka ${index + 1}</strong><br>
+                Prędkość: ${particle.speed.toFixed(2)} m/s<br>
+                Wiek: ${particle.age}<br>
+                Pozycja: (${particle.x.toFixed(2)}, ${particle.y.toFixed(2)})
+            `).addTo(maps.wind);
+        });
+    }
+}
+
+// Funkcja dla wektorów wiatru
+function addWindVectors() {
+    console.log('Dodaję wektory wiatru...');
+
+    windSimulationData.vector_field.forEach((vector, index) => {
+        const [lat, lng] = localToGeo(vector.x, vector.y);
+
+        // Oblicz końcowy punkt wektora (skalowanie dla wizualizacji)
+        const scale = 0.0005;
+        const endLat = lat + vector.vy * scale;
+        const endLng = lng + vector.vx * scale;
+
+        // Strzałka wektora
+        const arrow = L.polyline([[lat, lng], [endLat, endLng]], {
+            color: getWindColorFromMagnitude(vector.magnitude),
+            weight: 3,
+            opacity: 0.9
+        }).bindPopup(`
+            <strong>Wektor wiatru</strong><br>
+            Składowa X: ${vector.vx.toFixed(2)} m/s<br>
+            Składowa Y: ${vector.vy.toFixed(2)} m/s<br>
+            Magnitude: ${vector.magnitude.toFixed(2)} m/s<br>
+            Pozycja: (${vector.x}, ${vector.y})
+        `).addTo(maps.wind);
+
+        // Punkt początku wektora
+        L.circleMarker([lat, lng], {
+            radius: 3,
+            fillColor: '#000',
+            color: '#fff',
+            weight: 1,
+            opacity: 1,
+            fillOpacity: 1
+        }).addTo(maps.wind);
+    });
+}
+
+// Dodaj informację o lokalizacji i danych
+function addLocationInfo() {
+    const infoControl = L.control({ position: 'topright' });
+
+    infoControl.onAdd = function(map) {
+        const div = L.DomUtil.create('div', 'wind-info-panel');
+        div.style.background = 'rgba(255, 255, 255, 0.9)';
+        div.style.padding = '10px';
+        div.style.borderRadius = '5px';
+        div.style.boxShadow = '0 2px 5px rgba(0,0,0,0.2)';
+        div.style.fontSize = '12px';
+        div.style.maxWidth = '250px';
+
+        const stats = windSimulationData.flow_statistics;
+
+        div.innerHTML = `
+            <h4 style="margin: 0 0 8px 0; color: #333;">Symulacja CFD - Suwałki</h4>
+            <div><strong>Lokalizacja:</strong> ${SIMULATION_CENTER.lat.toFixed(4)}°N, ${SIMULATION_CENTER.lng.toFixed(4)}°E</div>
+            <div><strong>Czas obliczeń:</strong> ${windSimulationData.metadata.computation_time}s</div>
+            <div><strong>Prędkość min:</strong> ${stats.min_magnitude.toFixed(2)} m/s</div>
+            <div><strong>Prędkość max:</strong> ${stats.max_magnitude.toFixed(2)} m/s</div>
+            <div><strong>Prędkość średnia:</strong> ${stats.mean_magnitude.toFixed(2)} m/s</div>
+            <div><strong>Turbulencja:</strong> ${(stats.turbulence_intensity * 100).toFixed(1)}%</div>
+        `;
+
+        return div;
+    };
+
+    infoControl.addTo(maps.wind);
+}
+
+// Funkcje pomocnicze dla kolorów
+function getWindColorFromIntensity(intensity) {
+    // Gradient kolorów dla intensywności 0-1
+    if (intensity < 0.2) return '#0000FF';
+    if (intensity < 0.4) return '#00FFFF'; 
+    if (intensity < 0.6) return '#00FF00';
+    if (intensity < 0.8) return '#FFFF00';
+    return '#FF0000';
+}
+
+function getWindColorFromMagnitude(magnitude) {
+    const maxMag = windSimulationData ? windSimulationData.flow_statistics.max_magnitude : 5;
+    const intensity = Math.min(magnitude / maxMag, 1);
+    return getWindColorFromIntensity(intensity);
+}
+
+function getParticleColor(speed) {
+    const maxSpeed = windSimulationData ? windSimulationData.flow_statistics.max_magnitude : 5;
+    const intensity = Math.min(speed / maxSpeed, 1);
+    const hue = (1 - intensity) * 240; // Od niebieskiego do czerwonego
+    return `hsl(${hue}, 70%, 50%)`;
+}
+
 
 const sampleData = {
   weatherData: {
@@ -227,7 +517,7 @@ let thermalMarkers = [];
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', function() {
-    // Załaduj dane symulacji wiatru z GitHub
+    // Załaduj dane symulacji wiatru z GitHub na początku
     loadWindSimulationData();
 
 
@@ -598,210 +888,6 @@ function toggleFloodAnimation() {
 }
 
 // Wind analysis functions
-
-// Nowa funkcja do wizualizacji z rzeczywistymi danymi z JSON
-function updateWindVisualizationWithRealData() {
-    if (!maps.wind || !windSimulationData) return;
-
-    // Wyczyść istniejące warstwy
-    maps.wind.eachLayer(layer => {
-        if (layer instanceof L.Marker || layer instanceof L.Polyline) {
-            maps.wind.removeLayer(layer);
-        }
-    });
-
-    // Dodaj mapę cieplną prędkości wiatru
-    if (windSimulationData.magnitude_grid) {
-        addWindHeatmap();
-    }
-
-    // Dodaj streamlines
-    if (windSimulationData.streamlines) {
-        addStreamlines();
-    }
-
-    // Dodaj particles jeśli włączone
-    const showParticlesCheckbox = document.getElementById('show-particles');
-    if (showParticlesCheckbox && showParticlesCheckbox.checked && windSimulationData.particles) {
-        addWindParticles();
-    }
-
-    // Dodaj wektory jeśli włączone
-    const showVectorsCheckbox = document.getElementById('show-vectors');
-    if (showVectorsCheckbox && showVectorsCheckbox.checked && windSimulationData.vector_field) {
-        addWindVectors();
-    }
-}
-
-// Funkcja dodania mapy cieplnej prędkości wiatru
-function addWindHeatmap() {
-    const magnitudeGrid = windSimulationData.magnitude_grid;
-    const gridHeight = magnitudeGrid.length;
-    const gridWidth = magnitudeGrid[0].length;
-
-    // Zakres współrzędnych dla siatki (przykładowe wartości - dostosuj do rzeczywistego obszaru)
-    const bounds = [
-        [52.22, 21.00],  // południowo-zachodni róg
-        [52.24, 21.03]   // północno-wschodni róg
-    ];
-
-    // Stwórz punkty cieplne dla Leaflet
-    const heatPoints = [];
-    for (let i = 0; i < gridHeight; i++) {
-        for (let j = 0; j < gridWidth; j++) {
-            const lat = bounds[0][0] + (bounds[1][0] - bounds[0][0]) * (i / (gridHeight - 1));
-            const lng = bounds[0][1] + (bounds[1][1] - bounds[0][1]) * (j / (gridWidth - 1));
-            const magnitude = magnitudeGrid[i][j];
-
-            // Normalizuj intensywność (0-1)
-            const maxMagnitude = windSimulationData.flow_statistics.max_magnitude;
-            const intensity = magnitude / maxMagnitude;
-
-            heatPoints.push([lat, lng, intensity]);
-        }
-    }
-
-    // Dodaj heatmap do mapy (wymaga pluginu leaflet-heat)
-    if (typeof L.heatLayer !== 'undefined') {
-        const heatLayer = L.heatLayer(heatPoints, {
-            radius: 25,
-            blur: 15,
-            maxZoom: 17,
-            gradient: {
-                0.0: 'blue',
-                0.3: 'cyan',
-                0.5: 'lime',
-                0.7: 'yellow',
-                1.0: 'red'
-            }
-        }).addTo(maps.wind);
-    } else {
-        // Fallback - dodaj kolorowe kółka
-        for (let i = 0; i < gridHeight; i += 2) { // Co drugi punkt żeby nie przeciążać
-            for (let j = 0; j < gridWidth; j += 2) {
-                const lat = bounds[0][0] + (bounds[1][0] - bounds[0][0]) * (i / (gridHeight - 1));
-                const lng = bounds[0][1] + (bounds[1][1] - bounds[0][1]) * (j / (gridWidth - 1));
-                const magnitude = magnitudeGrid[i][j];
-
-                const color = getWindColorFromMagnitude(magnitude);
-                L.circle([lat, lng], {
-                    color: color,
-                    fillColor: color,
-                    fillOpacity: 0.6,
-                    radius: 30
-                }).bindPopup(`Prędkość wiatru: ${magnitude.toFixed(2)} m/s`).addTo(maps.wind);
-            }
-        }
-    }
-}
-
-// Funkcja dodania streamlines
-function addStreamlines() {
-    windSimulationData.streamlines.forEach((streamline, index) => {
-        // Przekształć punkty streamline na współrzędne geograficzne
-        const latlngs = streamline.map(point => {
-            // Przekształć współrzędne lokalne na geograficzne
-            const lat = 52.23 + (point.y / 1000) * 0.01; // Przykładowe przeskalowanie
-            const lng = 21.015 + (point.x / 1000) * 0.01;
-            return [lat, lng];
-        });
-
-        // Stwórz polyline dla streamline
-        const polyline = L.polyline(latlngs, {
-            color: `hsl(${(index * 40) % 360}, 70%, 50%)`,
-            weight: 2,
-            opacity: 0.8
-        }).addTo(maps.wind);
-
-        // Dodaj popup z informacjami o streamline
-        polyline.bindPopup(`Streamline ${index + 1}<br>Punkty: ${streamline.length}`);
-    });
-}
-
-// Funkcja dodania cząstek
-function addWindParticles() {
-    // Wybierz pierwszą grupę cząstek do wizualizacji
-    if (windSimulationData.particles.length > 0) {
-        const particleGroup = windSimulationData.particles[0];
-
-        particleGroup.forEach((particle, index) => {
-            // Przekształć współrzędne na geograficzne
-            const lat = 52.23 + (particle.y / 1000) * 0.01;
-            const lng = 21.015 + (particle.x / 1000) * 0.01;
-
-            // Stwórz marker dla cząstki
-            const marker = L.circleMarker([lat, lng], {
-                radius: 3,
-                fillColor: getParticleColor(particle.speed),
-                color: '#000',
-                weight: 1,
-                opacity: 1,
-                fillOpacity: 0.8
-            }).bindPopup(`
-                Cząstka ${index + 1}<br>
-                Prędkość: ${particle.speed.toFixed(2)} m/s<br>
-                Wiek: ${particle.age}
-            `).addTo(maps.wind);
-        });
-    }
-}
-
-// Funkcja dodania wektorów
-function addWindVectors() {
-    windSimulationData.vector_field.forEach(vector => {
-        // Przekształć współrzędne na geograficzne
-        const lat = 52.23 + (vector.y / 1000) * 0.01;
-        const lng = 21.015 + (vector.x / 1000) * 0.01;
-
-        // Oblicz końcowy punkt wektora
-        const scale = 0.001; // Skala dla wizualizacji
-        const endLat = lat + vector.vy * scale;
-        const endLng = lng + vector.vx * scale;
-
-        // Stwórz strzałkę dla wektora
-        const arrow = L.polyline([[lat, lng], [endLat, endLng]], {
-            color: getWindColorFromMagnitude(vector.magnitude),
-            weight: 3,
-            opacity: 0.8
-        }).bindPopup(`
-            Wektor wiatru<br>
-            Składowa X: ${vector.vx.toFixed(2)} m/s<br>
-            Składowa Y: ${vector.vy.toFixed(2)} m/s<br>
-            Magnitude: ${vector.magnitude.toFixed(2)} m/s
-        `).addTo(maps.wind);
-
-        // Dodaj marker dla początku wektora
-        L.circleMarker([lat, lng], {
-            radius: 2,
-            fillColor: '#000',
-            color: '#000',
-            weight: 1,
-            opacity: 1,
-            fillOpacity: 1
-        }).addTo(maps.wind);
-    });
-}
-
-// Funkcje pomocnicze dla kolorów
-function getWindColorFromMagnitude(magnitude) {
-    const maxMag = 5; // Maksymalna prędkość dla skali kolorów
-    const ratio = Math.min(magnitude / maxMag, 1);
-
-    if (ratio < 0.2) return '#0000FF'; // Niebieski
-    if (ratio < 0.4) return '#00FFFF'; // Cyan  
-    if (ratio < 0.6) return '#00FF00'; // Zielony
-    if (ratio < 0.8) return '#FFFF00'; // Żółty
-    return '#FF0000'; // Czerwony
-}
-
-function getParticleColor(speed) {
-    const maxSpeed = 5;
-    const ratio = Math.min(speed / maxSpeed, 1);
-    const hue = (1 - ratio) * 240; // Od niebieskiego (240) do czerwonego (0)
-    return `hsl(${hue}, 70%, 50%)`;
-}
-
-
 function updateWindVisualization() {
   if (!maps.wind) return;
 
@@ -1196,18 +1282,24 @@ document.addEventListener('DOMContentLoaded', () => {
     observer.observe(section);
   });
 });
-// Funkcje do obsługi checkboxów
-function updateParticleVisibility() {
-    const showParticles = document.getElementById('show-particles');
-    if (showParticles && maps.wind && windSimulationData) {
-        updateWindVisualizationWithRealData();
-    }
-}
 
-function updateVectorVisibility() {
-    const showVectors = document.getElementById('show-vectors');
-    if (showVectors && maps.wind && windSimulationData) {
-        updateWindVisualizationWithRealData();
+// Obsługa checkboxów dla cząstek i wektorów
+document.addEventListener('DOMContentLoaded', function() {
+    const showParticlesCheckbox = document.getElementById('show-particles');
+    if (showParticlesCheckbox) {
+        showParticlesCheckbox.addEventListener('change', function() {
+            if (maps.wind && windSimulationData) {
+                updateWindVisualizationWithRealData();
+            }
+        });
     }
-}
 
+    const showVectorsCheckbox = document.getElementById('show-vectors');
+    if (showVectorsCheckbox) {
+        showVectorsCheckbox.addEventListener('change', function() {
+            if (maps.wind && windSimulationData) {
+                updateWindVisualizationWithRealData();
+            }
+        });
+    }
+});
