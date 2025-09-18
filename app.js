@@ -1,23 +1,7 @@
 // Sample data from provided JSON
-
-// POPRAWIONA WERSJA - Funkcje do wizualizacji danych symulacji wiatru z prawidłowymi współrzędnymi
-
-// Zmienna globalna dla danych symulacji wiatru
+// === PODSTAWOWE FUNKCJE ŁADOWANIA DANYCH ===
 let windSimulationData = null;
 
-// WSPÓŁRZĘDNE SUWAŁK (gdzie wykonano symulację)
-const SIMULATION_CENTER = {
-    lat: 54.1118,
-    lng: 22.9309
-};
-
-// Rozmiar obszaru symulacji w stopniach (dostosowane do rzeczywistego rozmiaru symulacji)
-const SIMULATION_BOUNDS = {
-    width: 0.02,  // ~2.2 km w Suwałkach  
-    height: 0.01  // ~1.1 km w Suwałkach
-};
-
-// Funkcja do wczytania danych symulacji wiatru z GitHub
 async function loadWindSimulationData() {
     try {
         const response = await fetch('data/wind_simulation_results.json');
@@ -27,11 +11,10 @@ async function loadWindSimulationData() {
         windSimulationData = await response.json();
         console.log('Dane symulacji wiatru załadowane:', windSimulationData.metadata);
 
-        // Po załadowaniu danych, zaktualizuj mapę na Suwałki i pokaż wizualizację
+        // Po załadowaniu danych, dodaj CSS i zainicjalizuj zaawansowaną wizualizację
         if (maps.wind) {
-            // Ustaw mapę na Suwałki gdzie wykonano symulację
-            maps.wind.setView([SIMULATION_CENTER.lat, SIMULATION_CENTER.lng], 15);
-            updateWindVisualizationWithRealData();
+            addAdvancedWindCSS();
+            initAdvancedWindVisualization();
         }
 
         return windSimulationData;
@@ -41,24 +24,316 @@ async function loadWindSimulationData() {
     }
 }
 
-// Funkcja do konwersji współrzędnych lokalnych na geograficzne (Suwałki)
-function localToGeo(x, y) {
-    // Normalizuj do zakresu 0-1
-    const normalizedX = x / 20.0; // max X w danych
-    const normalizedY = y / 10.66; // max Y w danych
 
-    // Mapuj na obszar wokół Suwałk
-    const lat = SIMULATION_CENTER.lat - SIMULATION_BOUNDS.height/2 + normalizedY * SIMULATION_BOUNDS.height;
-    const lng = SIMULATION_CENTER.lng - SIMULATION_BOUNDS.width/2 + normalizedX * SIMULATION_BOUNDS.width;
+// === ZAAWANSOWANA WIZUALIZACJA WIATRU - INTEGRACJA Z DZIAŁAJĄCYM KODEM ===
 
-    return [lat, lng];
+// Parametry konfiguracyjne wizualizacji
+const WIND_VIZ_CONFIG = {
+    PARTICLE_COUNT: 6000,
+    PARTICLE_SPEED_SCALE: 0.2,
+    PARTICLE_LIFESPAN: 1000,
+    PARTICLE_LINE_WIDTH: 1.6,
+    PARTICLE_COLOR: "rgba(110, 190, 255, 0.8)",
+    GLOW_COLOR: "rgba(110, 190, 255, 0.5)",
+    GLOW_BLUR: 7
+};
+
+// Funkcja mapowania wartości na kolor (skala Viridis)
+function getViridisColor(value, min, max) {
+    const t = Math.max(0, Math.min(1, (value - min) / (max - min)));
+    const r = Math.round(255 * (0.267004 + 1.15172 * t - 2.92336 * t**2 + 1.52013 * t**3));
+    const g = Math.round(255 * (0.018623 + 2.75701 * t - 4.49472 * t**2 + 1.77533 * t**3));
+    const b = Math.round(255 * (0.354456 - 2.11226 * t + 10.5126 * t**2 - 12.3881 * t**3 + 3.63582 * t**4));
+    return `rgba(${r},${g},${b},0.6)`;
 }
 
-// Główna funkcja wizualizacji z rzeczywistymi danymi
-function updateWindVisualizationWithRealData() {
-    if (!maps.wind || !windSimulationData) return;
+// Adapter danych - przekształca nasze dane na format oczekiwany przez wizualizację
+function createWindDataAdapter(rawWindData) {
+    if (!rawWindData) return null;
 
-    console.log('Aktualizacja wizualizacji wiatru z rzeczywistymi danymi...');
+    // Utwórz bounds dla Suwałk na podstawie danych
+    const SIMULATION_CENTER = { lat: 54.1118, lng: 22.9309 };
+    const SIMULATION_SIZE = { width: 0.02, height: 0.01 };
+
+    const bounds = [
+        [SIMULATION_CENTER.lat - SIMULATION_SIZE.height/2, SIMULATION_CENTER.lng - SIMULATION_SIZE.width/2],
+        [SIMULATION_CENTER.lat + SIMULATION_SIZE.height/2, SIMULATION_CENTER.lng + SIMULATION_SIZE.width/2]
+    ];
+
+    const adapter = {
+        // Format danych zgodny z oczekiwaniami wizualizacji
+        magnitudeGrid: rawWindData.magnitude_grid,
+        gridWidth: rawWindData.magnitude_grid[0].length,
+        gridHeight: rawWindData.magnitude_grid.length,
+        bounds: bounds,
+        minMagnitude: rawWindData.flow_statistics.min_magnitude,
+        maxMagnitude: rawWindData.flow_statistics.max_magnitude,
+
+        // Przekształć streamlines do formatu geograficznego
+        streamlines: rawWindData.streamlines.map(streamline => 
+            streamline.map(point => ({
+                ...point,
+                lat: SIMULATION_CENTER.lat - SIMULATION_SIZE.height/2 + (point.y / 10.66) * SIMULATION_SIZE.height,
+                lng: SIMULATION_CENTER.lng - SIMULATION_SIZE.width/2 + (point.x / 20.0) * SIMULATION_SIZE.width
+            }))
+        ),
+
+        // Przekształć particles do formatu geograficznego
+        particles: rawWindData.particles.length > 0 ? rawWindData.particles[0].map(particle => ({
+            ...particle,
+            lat: SIMULATION_CENTER.lat - SIMULATION_SIZE.height/2 + (particle.y / 10.66) * SIMULATION_SIZE.height,
+            lng: SIMULATION_CENTER.lng - SIMULATION_SIZE.width/2 + (particle.x / 20.0) * SIMULATION_SIZE.width
+        })) : [],
+
+        // Przekształć vector field
+        vectorField: rawWindData.vector_field.map(vector => ({
+            ...vector,
+            lat: SIMULATION_CENTER.lat - SIMULATION_SIZE.height/2 + (vector.y / 10.66) * SIMULATION_SIZE.height,
+            lng: SIMULATION_CENTER.lng - SIMULATION_SIZE.width/2 + (vector.x / 20.0) * SIMULATION_SIZE.width
+        })),
+
+        // Metadane
+        metadata: rawWindData.metadata,
+        performance: rawWindData.performance
+    };
+
+    return adapter;
+}
+
+// === VelocityLayer - Warstwa pola prędkości ===
+const AdvancedVelocityLayer = L.Layer.extend({
+    initialize: function(data, bounds) {
+        this._data = data;
+        this._bounds = L.latLngBounds(bounds);
+    },
+
+    onAdd: function(map) {
+        this._map = map;
+        this._canvas = L.DomUtil.create('canvas', 'leaflet-zoom-animated velocity-canvas');
+        this._canvas.style.position = 'absolute';
+        map.getPanes().overlayPane.appendChild(this._canvas);
+        this._ctx = this._canvas.getContext('2d');
+
+        map.on('moveend zoomend resize', this._reset, this);
+        this._reset();
+    },
+
+    onRemove: function(map) {
+        map.getPanes().overlayPane.removeChild(this._canvas);
+        map.off('moveend zoomend resize', this._reset, this);
+    },
+
+    _reset: function() {
+        const topLeft = this._map.containerPointToLayerPoint([0, 0]);
+        L.DomUtil.setPosition(this._canvas, topLeft);
+
+        const size = this._map.getSize();
+        this._canvas.width = size.x;
+        this._canvas.height = size.y;
+        this._canvas.style.width = size.x + 'px';
+        this._canvas.style.height = size.y + 'px';
+
+        this._draw();
+    },
+
+    _draw: function() {
+        if (!this._data.magnitudeGrid) return;
+
+        const ctx = this._ctx;
+        ctx.clearRect(0, 0, this._canvas.width, this._canvas.height);
+
+        const grid = this._data.magnitudeGrid;
+        const w = this._data.gridWidth;
+        const h = this._data.gridHeight;
+        const { minMagnitude, maxMagnitude } = this._data;
+
+        const cellWidth = (this._bounds.getEast() - this._bounds.getWest()) / w;
+        const cellHeight = (this._bounds.getNorth() - this._bounds.getSouth()) / h;
+
+        for (let j = 0; j < h; j++) {
+            for (let i = 0; i < w; i++) {
+                const lat = this._bounds.getNorth() - ((j + 0.5) * cellHeight);
+                const lon = this._bounds.getWest() + ((i + 0.5) * cellWidth);
+                const point = this._map.latLngToContainerPoint([lat, lon]);
+
+                const value = grid[j] && grid[j][i] !== undefined ? grid[j][i] : NaN;
+                if (!isFinite(value)) continue;
+
+                ctx.fillStyle = getViridisColor(value, minMagnitude, maxMagnitude);
+                ctx.fillRect(Math.round(point.x - 2), Math.round(point.y - 2), 4, 4);
+            }
+        }
+    }
+});
+
+// === WindAnimationLayer - Warstwa animacji cząstek ===
+const AdvancedWindAnimationLayer = L.Layer.extend({
+    initialize: function(data, bounds) {
+        this._data = data;
+        this._bounds = L.latLngBounds(bounds);
+        this._particles = [];
+        this._animationFrame = null;
+    },
+
+    onAdd: function(map) {
+        this._map = map;
+        this._canvas = L.DomUtil.create('canvas', 'leaflet-zoom-animated wind-canvas');
+        this._canvas.id = 'wind-canvas';
+        this._canvas.style.position = 'absolute';
+        this._canvas.style.pointerEvents = 'none';
+
+        map.getPanes().overlayPane.appendChild(this._canvas);
+        this._ctx = this._canvas.getContext('2d');
+
+        map.on('moveend zoomend resize', this._reset, this);
+        this._reset();
+        this._initializeParticles();
+        this._animate();
+    },
+
+    onRemove: function(map) {
+        if (this._animationFrame) {
+            cancelAnimationFrame(this._animationFrame);
+            this._animationFrame = null;
+        }
+        map.getPanes().overlayPane.removeChild(this._canvas);
+        map.off('moveend zoomend resize', this._reset, this);
+    },
+
+    _reset: function() {
+        const topLeft = this._map.containerPointToLayerPoint([0, 0]);
+        L.DomUtil.setPosition(this._canvas, topLeft);
+
+        const size = this._map.getSize();
+        this._canvas.width = size.x;
+        this._canvas.height = size.y;
+        this._canvas.style.width = size.x + 'px';
+        this._canvas.style.height = size.y + 'px';
+
+        this._initializeParticles();
+    },
+
+    _initializeParticles: function() {
+        this._particles = [];
+
+        // Użyj rzeczywistych cząstek z danych jeśli są dostępne
+        if (this._data.particles && this._data.particles.length > 0) {
+            const sourceParticles = this._data.particles.slice(0, Math.min(WIND_VIZ_CONFIG.PARTICLE_COUNT, this._data.particles.length));
+
+            sourceParticles.forEach(particle => {
+                const point = this._map.latLngToContainerPoint([particle.lat, particle.lng]);
+                if (point.x >= 0 && point.x < this._canvas.width && point.y >= 0 && point.y < this._canvas.height) {
+                    this._particles.push({
+                        x: point.x,
+                        y: point.y,
+                        vx: particle.vx * WIND_VIZ_CONFIG.PARTICLE_SPEED_SCALE,
+                        vy: -particle.vy * WIND_VIZ_CONFIG.PARTICLE_SPEED_SCALE, // odwróć Y
+                        age: Math.random() * WIND_VIZ_CONFIG.PARTICLE_LIFESPAN,
+                        speed: particle.speed
+                    });
+                }
+            });
+        } else {
+            // Fallback - generuj losowe cząstki
+            for (let i = 0; i < WIND_VIZ_CONFIG.PARTICLE_COUNT; i++) {
+                this._particles.push(this._createRandomParticle());
+            }
+        }
+    },
+
+    _createRandomParticle: function() {
+        return {
+            x: Math.random() * this._canvas.width,
+            y: Math.random() * this._canvas.height,
+            vx: (Math.random() - 0.5) * 4,
+            vy: (Math.random() - 0.5) * 4,
+            age: Math.random() * WIND_VIZ_CONFIG.PARTICLE_LIFESPAN,
+            speed: Math.random() * 3 + 1
+        };
+    },
+
+    _animate: function() {
+        this._ctx.clearRect(0, 0, this._canvas.width, this._canvas.height);
+
+        // Ustawienia canvas dla efektu świecenia
+        this._ctx.globalCompositeOperation = 'screen';
+        this._ctx.lineWidth = WIND_VIZ_CONFIG.PARTICLE_LINE_WIDTH;
+
+        this._particles.forEach((particle, index) => {
+            // Aktualizuj pozycję
+            const oldX = particle.x;
+            const oldY = particle.y;
+
+            particle.x += particle.vx;
+            particle.y += particle.vy;
+            particle.age++;
+
+            // Sprawdź granice i resetuj cząstkę jeśli wyszła poza obszar lub jest za stara
+            if (particle.x < 0 || particle.x > this._canvas.width || 
+                particle.y < 0 || particle.y > this._canvas.height || 
+                particle.age > WIND_VIZ_CONFIG.PARTICLE_LIFESPAN) {
+                this._particles[index] = this._createRandomParticle();
+                return;
+            }
+
+            // Narysuj ślad cząstki
+            const alpha = Math.max(0, 1 - particle.age / WIND_VIZ_CONFIG.PARTICLE_LIFESPAN);
+            this._ctx.strokeStyle = WIND_VIZ_CONFIG.PARTICLE_COLOR.replace('0.8', alpha.toString());
+
+            this._ctx.beginPath();
+            this._ctx.moveTo(oldX, oldY);
+            this._ctx.lineTo(particle.x, particle.y);
+            this._ctx.stroke();
+        });
+
+        this._animationFrame = requestAnimationFrame(() => this._animate());
+    }
+});
+
+// === LegendControl - Kontrolka legendy ===
+const AdvancedLegendControl = L.Control.extend({
+    options: {
+        position: 'bottomright'
+    },
+
+    onAdd: function(map) {
+        this._container = L.DomUtil.create('div', 'leaflet-control legend-control');
+        this.update();
+        return this._container;
+    },
+
+    update: function(min = 0, max = 1) {
+        const gradientColors = [];
+        for (let i = 0; i <= 100; i += 10) {
+            gradientColors.push(getViridisColor(min + (i/100)*(max-min), min, max));
+        }
+
+        this._container.innerHTML = `
+            <h4>Prędkość wiatru [m/s]</h4>
+            <div class="legend-gradient" style="background: linear-gradient(to right, ${gradientColors.join(', ')});"></div>
+            <div class="legend-labels">
+                <span>${min.toFixed(1)}</span>
+                <span>${max.toFixed(1)}</span>
+            </div>
+        `;
+    }
+});
+
+// === GŁÓWNA FUNKCJA ZAAWANSOWANEJ WIZUALIZACJI ===
+function initAdvancedWindVisualization() {
+    if (!maps.wind || !windSimulationData) {
+        console.warn('Mapa wiatru lub dane nie są dostępne');
+        return;
+    }
+
+    console.log('Inicjalizacja zaawansowanej wizualizacji wiatru...');
+
+    // Przekształć dane na oczekiwany format
+    const adaptedData = createWindDataAdapter(windSimulationData);
+    if (!adaptedData) {
+        console.error('Nie udało się zaadaptować danych');
+        return;
+    }
 
     // Wyczyść istniejące warstwy
     maps.wind.eachLayer(layer => {
@@ -67,251 +342,162 @@ function updateWindVisualizationWithRealData() {
         }
     });
 
-    // Usuń istniejącą warstwę heatmap jeśli istnieje
+    // Usuń istniejącą warstwę heatmap
     if (window.currentHeatLayer) {
         maps.wind.removeLayer(window.currentHeatLayer);
     }
 
-    // Dodaj kontinuous heatmap prędkości wiatru
-    addContinuousWindHeatmap();
-
-    // Dodaj streamlines
-    addStreamlines();
-
-    // Dodaj particles jeśli włączone
-    const showParticlesCheckbox = document.getElementById('show-particles');
-    if (showParticlesCheckbox && showParticlesCheckbox.checked) {
-        addWindParticles();
-    }
-
-    // Dodaj wektory jeśli włączone
-    const showVectorsCheckbox = document.getElementById('show-vectors');
-    if (showVectorsCheckbox && showVectorsCheckbox.checked) {
-        addWindVectors();
-    }
-
-    // Dodaj informację o lokalizacji
-    addLocationInfo();
-}
-
-// KONTINUOUS HEATMAP - prawdziwa mapa cieplna
-function addContinuousWindHeatmap() {
-    const magnitudeGrid = windSimulationData.magnitude_grid;
-    const gridHeight = magnitudeGrid.length;
-    const gridWidth = magnitudeGrid[0].length;
-
-    console.log(`Tworzenie kontinuous heatmap ${gridWidth}x${gridHeight}...`);
-
-    // Przygotuj punkty dla leaflet heatmap
-    const heatPoints = [];
-
-    for (let i = 0; i < gridHeight; i++) {
-        for (let j = 0; j < gridWidth; j++) {
-            // Mapuj indeksy siatki na współrzędne lokalne
-            const localX = (j / (gridWidth - 1)) * 20.0;
-            const localY = (i / (gridHeight - 1)) * 10.66;
-
-            // Konwertuj na współrzędne geograficzne
-            const [lat, lng] = localToGeo(localX, localY);
-
-            const magnitude = magnitudeGrid[i][j];
-
-            // Normalizuj intensywność (0-1) względem maksymalnej prędkości
-            const maxMagnitude = windSimulationData.flow_statistics.max_magnitude;
-            const intensity = Math.min(magnitude / maxMagnitude, 1.0);
-
-            heatPoints.push([lat, lng, intensity]);
-        }
-    }
-
-    // Stwórz kontinuous heatmap z leaflet-heat
-    if (typeof L.heatLayer !== 'undefined') {
-        const heatOptions = {
-            radius: 30,           // Większy promień dla płynniejszego przejścia
-            blur: 25,            // Więcej rozmycia dla kontinuous efektu
-            maxZoom: 18,
-            max: 1.0,
-            gradient: {
-                0.0: '#0000FF',   // Niebieski - niska prędkość
-                0.2: '#00FFFF',   // Cyan
-                0.4: '#00FF00',   // Zielony  
-                0.6: '#FFFF00',   // Żółty
-                0.8: '#FF8000',   // Pomarańczowy
-                1.0: '#FF0000'    // Czerwony - wysoka prędkość
+    // Usuń poprzednie zaawansowane warstwy jeśli istnieją
+    if (window.advancedLayers) {
+        window.advancedLayers.forEach(layer => {
+            if (maps.wind.hasLayer(layer)) {
+                maps.wind.removeLayer(layer);
             }
-        };
-
-        window.currentHeatLayer = L.heatLayer(heatPoints, heatOptions).addTo(maps.wind);
-
-        console.log(`Kontinuous heatmap utworzona z ${heatPoints.length} punktów`);
-    } else {
-        console.error('Plugin leaflet-heat nie jest załadowany!');
-        // Fallback - pokolorowane kółka (ale mniejsze i z większą przezroczystością)
-        addFallbackHeatmap(heatPoints);
-    }
-}
-
-// Fallback jeśli nie ma pluginu leaflet-heat
-function addFallbackHeatmap(heatPoints) {
-    console.log('Używam fallback heatmap...');
-
-    for (let i = 0; i < heatPoints.length; i += 4) { // Co 4-ty punkt żeby nie przeciążać
-        const [lat, lng, intensity] = heatPoints[i];
-
-        const color = getWindColorFromIntensity(intensity);
-
-        L.circle([lat, lng], {
-            color: color,
-            fillColor: color,
-            fillOpacity: 0.4,
-            weight: 0,
-            radius: 15
-        }).addTo(maps.wind);
-    }
-}
-
-// Funkcja dla streamlines z prawidłowymi współrzędnymi
-function addStreamlines() {
-    console.log(`Dodaję ${windSimulationData.streamlines.length} streamlines...`);
-
-    windSimulationData.streamlines.forEach((streamline, index) => {
-        const latlngs = streamline.map(point => localToGeo(point.x, point.y));
-
-        // Różne kolory dla różnych streamlines
-        const hue = (index * 40) % 360;
-
-        const polyline = L.polyline(latlngs, {
-            color: `hsl(${hue}, 70%, 50%)`,
-            weight: 3,
-            opacity: 0.9
-        }).addTo(maps.wind);
-
-        polyline.bindPopup(`
-            <strong>Streamline ${index + 1}</strong><br>
-            Punkty: ${streamline.length}<br>
-            Prędkość średnia: ${(streamline.reduce((sum, p) => sum + p.speed, 0) / streamline.length).toFixed(2)} m/s
-        `);
-    });
-}
-
-// Funkcja dla cząstek
-function addWindParticles() {
-    if (windSimulationData.particles.length > 0) {
-        console.log('Dodaję cząstki wiatru...');
-
-        // Użyj pierwszej grupy cząstek
-        const particleGroup = windSimulationData.particles[0];
-
-        particleGroup.forEach((particle, index) => {
-            const [lat, lng] = localToGeo(particle.x, particle.y);
-
-            const marker = L.circleMarker([lat, lng], {
-                radius: 4,
-                fillColor: getParticleColor(particle.speed),
-                color: '#000',
-                weight: 1,
-                opacity: 1,
-                fillOpacity: 0.8
-            }).bindPopup(`
-                <strong>Cząstka ${index + 1}</strong><br>
-                Prędkość: ${particle.speed.toFixed(2)} m/s<br>
-                Wiek: ${particle.age}<br>
-                Pozycja: (${particle.x.toFixed(2)}, ${particle.y.toFixed(2)})
-            `).addTo(maps.wind);
         });
     }
-}
 
-// Funkcja dla wektorów wiatru
-function addWindVectors() {
-    console.log('Dodaję wektory wiatru...');
+    // Utwórz nowe zaawansowane warstwy
+    const velocityLayer = new AdvancedVelocityLayer(adaptedData, adaptedData.bounds);
+    const windAnimLayer = new AdvancedWindAnimationLayer(adaptedData, adaptedData.bounds);
+    const legend = new AdvancedLegendControl();
 
-    windSimulationData.vector_field.forEach((vector, index) => {
-        const [lat, lng] = localToGeo(vector.x, vector.y);
+    // Dodaj warstwy do mapy
+    velocityLayer.addTo(maps.wind);
+    windAnimLayer.addTo(maps.wind);
+    legend.addTo(maps.wind);
+    legend.update(adaptedData.minMagnitude, adaptedData.maxMagnitude);
 
-        // Oblicz końcowy punkt wektora (skalowanie dla wizualizacji)
-        const scale = 0.0005;
-        const endLat = lat + vector.vy * scale;
-        const endLng = lng + vector.vx * scale;
+    // Zapisz referencje do warstw
+    window.advancedLayers = [velocityLayer, windAnimLayer, legend];
 
-        // Strzałka wektora
-        const arrow = L.polyline([[lat, lng], [endLat, endLng]], {
-            color: getWindColorFromMagnitude(vector.magnitude),
-            weight: 3,
-            opacity: 0.9
-        }).bindPopup(`
-            <strong>Wektor wiatru</strong><br>
-            Składowa X: ${vector.vx.toFixed(2)} m/s<br>
-            Składowa Y: ${vector.vy.toFixed(2)} m/s<br>
-            Magnitude: ${vector.magnitude.toFixed(2)} m/s<br>
-            Pozycja: (${vector.x}, ${vector.y})
-        `).addTo(maps.wind);
+    // Dodaj kontrolki warstw
+    if (!window.advancedLayerControl) {
+        const overlayMaps = {
+            "Pola prędkości": velocityLayer,
+            "Przepływ wiatru": windAnimLayer
+        };
 
-        // Punkt początku wektora
-        L.circleMarker([lat, lng], {
-            radius: 3,
-            fillColor: '#000',
-            color: '#fff',
-            weight: 1,
-            opacity: 1,
-            fillOpacity: 1
+        window.advancedLayerControl = L.control.layers(null, overlayMaps, { 
+            collapsed: false,
+            position: 'topright'
         }).addTo(maps.wind);
-    });
+    }
+
+    // Ustaw mapę na właściwy obszar
+    maps.wind.fitBounds(adaptedData.bounds);
+
+    // Dodaj panel informacyjny
+    addAdvancedInfoPanel(adaptedData);
+
+    console.log('Zaawansowana wizualizacja wiatru zainicjalizowana');
 }
 
-// Dodaj informację o lokalizacji i danych
-function addLocationInfo() {
-    const infoControl = L.control({ position: 'topright' });
+// Funkcja dodania panelu informacyjnego
+function addAdvancedInfoPanel(data) {
+    // Usuń poprzedni panel jeśli istnieje
+    if (window.advancedInfoPanel) {
+        maps.wind.removeControl(window.advancedInfoPanel);
+    }
+
+    const infoControl = L.control({ position: 'topleft' });
 
     infoControl.onAdd = function(map) {
-        const div = L.DomUtil.create('div', 'wind-info-panel');
-        div.style.background = 'rgba(255, 255, 255, 0.9)';
+        const div = L.DomUtil.create('div', 'advanced-info-panel');
+        div.style.background = 'rgba(40, 45, 50, 0.85)';
+        div.style.backdropFilter = 'blur(5px)';
+        div.style.color = '#f0f0f0';
         div.style.padding = '10px';
-        div.style.borderRadius = '5px';
-        div.style.boxShadow = '0 2px 5px rgba(0,0,0,0.2)';
+        div.style.borderRadius = '8px';
+        div.style.boxShadow = '0 2px 10px rgba(0,0,0,0.3)';
+        div.style.border = '1px solid rgba(255, 255, 255, 0.1)';
+        div.style.maxWidth = '300px';
         div.style.fontSize = '12px';
-        div.style.maxWidth = '250px';
-
-        const stats = windSimulationData.flow_statistics;
 
         div.innerHTML = `
-            <h4 style="margin: 0 0 8px 0; color: #333;">Symulacja CFD - Suwałki</h4>
-            <div><strong>Lokalizacja:</strong> ${SIMULATION_CENTER.lat.toFixed(4)}°N, ${SIMULATION_CENTER.lng.toFixed(4)}°E</div>
-            <div><strong>Czas obliczeń:</strong> ${windSimulationData.metadata.computation_time}s</div>
-            <div><strong>Prędkość min:</strong> ${stats.min_magnitude.toFixed(2)} m/s</div>
-            <div><strong>Prędkość max:</strong> ${stats.max_magnitude.toFixed(2)} m/s</div>
-            <div><strong>Prędkość średnia:</strong> ${stats.mean_magnitude.toFixed(2)} m/s</div>
-            <div><strong>Turbulencja:</strong> ${(stats.turbulence_intensity * 100).toFixed(1)}%</div>
+            <h3 style="margin: 0 0 8px 0; color: #ffffff; font-size: 16px;">Symulacja CFD - Suwałki</h3>
+            <div><strong>Cząstki:</strong> ${WIND_VIZ_CONFIG.PARTICLE_COUNT.toLocaleString()}</div>
+            <div><strong>Siatka:</strong> ${data.gridWidth} × ${data.gridHeight}</div>
+            <div><strong>Prędkość min:</strong> ${data.minMagnitude.toFixed(2)} m/s</div>
+            <div><strong>Prędkość max:</strong> ${data.maxMagnitude.toFixed(2)} m/s</div>
+            <div><strong>Czas obliczeń:</strong> ${data.metadata.computation_time}s</div>
+            <div style="margin-top: 8px; font-size: 11px; color: #bbbbbb;">
+                Wizualizacja używa skalę kolorów Viridis i animowane cząstki.
+            </div>
         `;
 
         return div;
     };
 
     infoControl.addTo(maps.wind);
+    window.advancedInfoPanel = infoControl;
 }
 
-// Funkcje pomocnicze dla kolorów
-function getWindColorFromIntensity(intensity) {
-    // Gradient kolorów dla intensywności 0-1
-    if (intensity < 0.2) return '#0000FF';
-    if (intensity < 0.4) return '#00FFFF'; 
-    if (intensity < 0.6) return '#00FF00';
-    if (intensity < 0.8) return '#FFFF00';
-    return '#FF0000';
+// === CSS Style dla zaawansowanej wizualizacji ===
+const advancedWindCSS = `
+.advanced-info-panel {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
 }
 
-function getWindColorFromMagnitude(magnitude) {
-    const maxMag = windSimulationData ? windSimulationData.flow_statistics.max_magnitude : 5;
-    const intensity = Math.min(magnitude / maxMag, 1);
-    return getWindColorFromIntensity(intensity);
+.legend-control {
+    background: rgba(40, 45, 50, 0.85) !important;
+    backdrop-filter: blur(5px);
+    padding: 10px;
+    border-radius: 5px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 1px 5px rgba(0,0,0,0.4);
+    color: #f0f0f0;
+    line-height: 1.2;
 }
 
-function getParticleColor(speed) {
-    const maxSpeed = windSimulationData ? windSimulationData.flow_statistics.max_magnitude : 5;
-    const intensity = Math.min(speed / maxSpeed, 1);
-    const hue = (1 - intensity) * 240; // Od niebieskiego do czerwonego
-    return `hsl(${hue}, 70%, 50%)`;
+.legend-control h4 {
+    margin: 0 0 5px 0;
+    font-size: 14px;
+    font-weight: bold;
+    text-align: center;
 }
+
+.legend-gradient {
+    height: 10px;
+    width: 150px;
+    border-radius: 5px;
+}
+
+.legend-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    margin-top: 3px;
+}
+
+.leaflet-control-layers {
+    background: rgba(40, 45, 50, 0.85) !important;
+    backdrop-filter: blur(5px);
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    box-shadow: 0 1px 5px rgba(0,0,0,0.4);
+    color: #f0f0f0 !important;
+    border-radius: 5px;
+}
+
+.velocity-canvas {
+    opacity: 0.8;
+}
+
+#wind-canvas {
+    pointer-events: none;
+}
+`;
+
+// Dodaj CSS do strony
+function addAdvancedWindCSS() {
+    if (!document.getElementById('advanced-wind-css')) {
+        const style = document.createElement('style');
+        style.id = 'advanced-wind-css';
+        style.textContent = advancedWindCSS;
+        document.head.appendChild(style);
+    }
+}
+
+console.log('Zaawansowane komponenty wizualizacji wiatru załadowane');
 
 
 const sampleData = {
@@ -517,7 +703,7 @@ let thermalMarkers = [];
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', function() {
-    // Załaduj dane symulacji wiatru z GitHub na początku
+    // Załaduj dane symulacji wiatru na początku
     loadWindSimulationData();
 
 
@@ -1283,23 +1469,49 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
-// Obsługa checkboxów dla cząstek i wektorów
-document.addEventListener('DOMContentLoaded', function() {
-    const showParticlesCheckbox = document.getElementById('show-particles');
-    if (showParticlesCheckbox) {
-        showParticlesCheckbox.addEventListener('change', function() {
-            if (maps.wind && windSimulationData) {
-                updateWindVisualizationWithRealData();
+// === OBSŁUGA PRZEŁĄCZANIA MIĘDZY WIZUALIZACJAMI ===
+
+// Funkcja przełączania na zaawansowaną wizualizację
+function switchToAdvancedVisualization() {
+    if (windSimulationData) {
+        addAdvancedWindCSS();
+        initAdvancedWindVisualization();
+    } else {
+        console.warn('Dane symulacji nie są załadowane');
+    }
+}
+
+// Funkcja przełączania na podstawową wizualizację
+function switchToBasicVisualization() {
+    // Usuń zaawansowane warstwy
+    if (window.advancedLayers) {
+        window.advancedLayers.forEach(layer => {
+            if (maps.wind.hasLayer(layer)) {
+                maps.wind.removeLayer(layer);
             }
         });
     }
 
-    const showVectorsCheckbox = document.getElementById('show-vectors');
-    if (showVectorsCheckbox) {
-        showVectorsCheckbox.addEventListener('change', function() {
-            if (maps.wind && windSimulationData) {
-                updateWindVisualizationWithRealData();
-            }
-        });
+    // Usuń kontrolki
+    if (window.advancedLayerControl) {
+        maps.wind.removeControl(window.advancedLayerControl);
+        window.advancedLayerControl = null;
     }
-});
+
+    if (window.advancedInfoPanel) {
+        maps.wind.removeControl(window.advancedInfoPanel);
+        window.advancedInfoPanel = null;
+    }
+
+    // Przywróć podstawową wizualizację
+    updateWindVisualization();
+}
+
+// Globalne funkcje dostępne w konsoli
+window.switchToAdvancedVisualization = switchToAdvancedVisualization;
+window.switchToBasicVisualization = switchToBasicVisualization;
+
+console.log('Integracja wizualizacji wiatru ukończona');
+console.log('Dostępne funkcje:');
+console.log('  - switchToAdvancedVisualization() - przełącz na zaawansowaną wizualizację');
+console.log('  - switchToBasicVisualization() - przełącz na podstawową wizualizację');
