@@ -1,7 +1,7 @@
 {
-  "temperature": 17.5,
-  "humidity": 86,
-  "wind_speed": 21.8,
-  "wind_direction": 121,
-  "timestamp": "2025-09-11T08:15"
+  "temperature": 15.3,
+  "humidity": 76,
+  "wind_speed": 15.0,
+  "wind_direction": 201,
+  "timestamp": "2025-09-18T11:30"
 }
