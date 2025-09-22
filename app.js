@@ -8,16 +8,40 @@ async function loadWindSimulationData() {
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
+        
         windSimulationData = await response.json();
         console.log('Dane symulacji wiatru załadowane:', windSimulationData.metadata);
-
+        
+        // NOWE: Walidacja danych
+        if (!windSimulationData.spatial_reference) {
+            console.warn('Brak informacji spatial_reference w danych!');
+        } else {
+            console.log('CRS danych:', windSimulationData.spatial_reference.crs);
+            console.log('Bounds WGS84:', windSimulationData.spatial_reference.bounds_wgs84);
+        }
+        
+        // Sprawdź czy vector_field ma współrzędne geograficzne
+        if (windSimulationData.vector_field && windSimulationData.vector_field.length > 0) {
+            const firstPoint = windSimulationData.vector_field[0];
+            if (firstPoint.longitude !== undefined && firstPoint.latitude !== undefined) {
+                console.log('✅ Dane zawierają współrzędne geograficzne');
+                console.log('Przykładowy punkt:', {
+                    pixel: `(${firstPoint.pixel_x}, ${firstPoint.pixel_y})`,
+                    geo: `(${firstPoint.longitude.toFixed(6)}, ${firstPoint.latitude.toFixed(6)})`
+                });
+            } else {
+                console.error('❌ Dane NIE zawierają współrzędnych geograficznych!');
+            }
+        }
+        
         // Po załadowaniu danych, dodaj CSS i zainicjalizuj zaawansowaną wizualizację
         if (maps.wind) {
             addAdvancedWindCSS();
             initAdvancedWindVisualization();
         }
-
+        
         return windSimulationData;
+        
     } catch (error) {
         console.error('Błąd podczas ładowania danych symulacji wiatru:', error);
         return null;
