@@ -50,53 +50,70 @@ function getViridisColor(value, min, max) {
 // Adapter danych - przekształca nasze dane na format oczekiwany przez wizualizację
 function createWindDataAdapter(rawWindData) {
     if (!rawWindData) return null;
-
-    // Utwórz bounds dla Suwałk na podstawie danych
-    const SIMULATION_CENTER = { lat: 54.1118, lng: 22.9309 };
-    const SIMULATION_SIZE = { width: 0.02, height: 0.01 };
-
+    
+    // NOWE: Sprawdź czy dane zawierają współrzędne geograficzne
+    const hasGeoCoords = rawWindData.vector_field && 
+                        rawWindData.vector_field.length > 0 && 
+                        rawWindData.vector_field[0].longitude !== undefined;
+    
+    if (!hasGeoCoords) {
+        console.error('Dane symulacji nie zawierają współrzędnych geograficznych!');
+        return null;
+    }
+    
+    // NOWE: Użyj prawdziwych bounds z danych zamiast hardkodowania
+    const bounds_wgs84 = rawWindData.spatial_reference?.bounds_wgs84;
+    if (!bounds_wgs84) {
+        console.error('Brak informacji o bounds_wgs84 w danych symulacji!');
+        return null;
+    }
+    
     const bounds = [
-        [SIMULATION_CENTER.lat - SIMULATION_SIZE.height/2, SIMULATION_CENTER.lng - SIMULATION_SIZE.width/2],
-        [SIMULATION_CENTER.lat + SIMULATION_SIZE.height/2, SIMULATION_CENTER.lng + SIMULATION_SIZE.width/2]
+        [bounds_wgs84.south, bounds_wgs84.west],   // SW corner
+        [bounds_wgs84.north, bounds_wgs84.east]    // NE corner
     ];
-
+    
+    console.log('Używam prawdziwych bounds z danych:', bounds);
+    
     const adapter = {
         // Format danych zgodny z oczekiwaniami wizualizacji
         magnitudeGrid: rawWindData.magnitude_grid,
         gridWidth: rawWindData.magnitude_grid[0].length,
         gridHeight: rawWindData.magnitude_grid.length,
-        bounds: bounds,
+        bounds: bounds,  // NOWE: prawdziwe bounds
         minMagnitude: rawWindData.flow_statistics.min_magnitude,
         maxMagnitude: rawWindData.flow_statistics.max_magnitude,
-
-        // Przekształć streamlines do formatu geograficznego
+        
+        // NOWE: Użyj prawdziwych współrzędnych geograficznych
         streamlines: rawWindData.streamlines.map(streamline => 
             streamline.map(point => ({
                 ...point,
-                lat: SIMULATION_CENTER.lat - SIMULATION_SIZE.height/2 + (point.y / 10.66) * SIMULATION_SIZE.height,
-                lng: SIMULATION_CENTER.lng - SIMULATION_SIZE.width/2 + (point.x / 20.0) * SIMULATION_SIZE.width
+                lat: point.latitude,   // NOWE: użyj prawdziwych współrzędnych
+                lng: point.longitude
             }))
         ),
-
-        // Przekształć particles do formatu geograficznego
-        particles: rawWindData.particles.length > 0 ? rawWindData.particles[0].map(particle => ({
-            ...particle,
-            lat: SIMULATION_CENTER.lat - SIMULATION_SIZE.height/2 + (particle.y / 10.66) * SIMULATION_SIZE.height,
-            lng: SIMULATION_CENTER.lng - SIMULATION_SIZE.width/2 + (particle.x / 20.0) * SIMULATION_SIZE.width
-        })) : [],
-
-        // Przekształć vector field
+        
+        // NOWE: Użyj prawdziwych współrzędnych dla particles
+        particles: rawWindData.particles.length > 0 ? 
+            rawWindData.particles[0].map(particle => ({
+                ...particle,
+                lat: particle.latitude,   // NOWE: użyj prawdziwych współrzędnych
+                lng: particle.longitude
+            })) : [],
+        
+        // NOWE: Użyj prawdziwych współrzędnych dla vector field
         vectorField: rawWindData.vector_field.map(vector => ({
             ...vector,
-            lat: SIMULATION_CENTER.lat - SIMULATION_SIZE.height/2 + (vector.y / 10.66) * SIMULATION_SIZE.height,
-            lng: SIMULATION_CENTER.lng - SIMULATION_SIZE.width/2 + (vector.x / 20.0) * SIMULATION_SIZE.width
+            lat: vector.latitude,     // NOWE: użyj prawdziwych współrzędnych
+            lng: vector.longitude
         })),
-
+        
         // Metadane
         metadata: rawWindData.metadata,
-        performance: rawWindData.performance
+        performance: rawWindData.performance,
+        spatial_reference: rawWindData.spatial_reference  // NOWE: dodaj info o CRS
     };
-
+    
     return adapter;
 }
 
