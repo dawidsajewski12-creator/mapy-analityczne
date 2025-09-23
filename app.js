@@ -92,10 +92,10 @@ function createWindDataAdapter(rawWindData) {
         return null;
     }
     
-    const bounds = [
-        [bounds_wgs84.south, bounds_wgs84.west],   // SW corner
-        [bounds_wgs84.north, bounds_wgs84.east]    // NE corner
-    ];
+    const bounds = L.latLngBounds(
+        [bounds_wgs84.south, bounds_wgs84.west], // SW corner
+        [bounds_wgs84.north, bounds_wgs84.east]  // NE corner  
+    );
     
     console.log('Używam prawdziwych bounds z danych:', bounds);
     
@@ -145,7 +145,7 @@ function createWindDataAdapter(rawWindData) {
 const AdvancedVelocityLayer = L.Layer.extend({
     initialize: function(data, bounds) {
         this._data = data;
-        this._bounds = L.latLngBounds(bounds);
+        this.bounds = bounds;
     },
 
     onAdd: function(map) {
