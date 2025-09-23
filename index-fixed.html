@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analiza Danych Środowiskowych - Portfolio</title>
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Leaflet Heatmap Plugin -->
+    <script src="https://cdn.jsdelivr.net/npm/leaflet.heat@0.2.0/dist/leaflet-heat.min.js"></script>
+    
+    <style>
+        /* Dodatkowe style dla nowych funkcji */
+        .velocity-layer {
+            pointer-events: none;
+        }
+        
+        .streamlines-layer {
+            pointer-events: none;
+        }
+        
+        .wind-animation-layer {
+            pointer-events: none;
+        }
+        
+        .wind-info-panel {
+            background: rgba(0, 0, 0, 0.8) !important;
+            color: white !important;
+            padding: 10px !important;
+            border-radius: 5px !important;
+            font-size: 12px !important;
+            line-height: 1.4 !important;
+        }
+        
+        .wind-info-panel h4 {
+            margin: 0 0 8px 0 !important;
+            color: #4fc3f7 !important;
+            font-size: 14px !important;
+        }
+        
+        .leaflet-control-layers {
+            background: rgba(0, 0, 0, 0.8) !important;
+            color: white !important;
+            border-radius: 5px !important;
+        }
+        
+        .leaflet-control-layers-title {
+            color: white !important;
+            font-weight: bold !important;
+        }
+        
+        .leaflet-control-layers label {
+            color: white !important;
+        }
+        
+        .leaflet-control-layers input[type="checkbox"] {
+            margin-right: 5px !important;
+        }
+        
+        .notification-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 10000;
+        }
+        
+        .notification {
+            color: white;
+            padding: 12px 20px;
+            border-radius: 5px;
+            margin-bottom: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+        
+        .notification-error {
+            background: #f44336;
+        }
+        
+        .notification-success {
+            background: #4caf50;
+        }
+        
+        .notification-info {
+            background: #2196f3;
+        }
+        
+        @keyframes slideInRight {
+            from { 
+                transform: translateX(100%); 
+                opacity: 0; 
+            }
+            to { 
+                transform: translateX(0); 
+                opacity: 1; 
+            }
+        }
+        
+        @keyframes slideOutRight {
+            from { 
+                transform: translateX(0); 
+                opacity: 1; 
+            }
+            to { 
+                transform: translateX(100%); 
+                opacity: 0; 
+            }
+        }
+        
+        /* Dodatkowe style dla kontrolek wiatru */
+        .wind-controls {
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        .wind-controls h4 {
+            color: #4fc3f7;
+            margin-bottom: 15px;
+            font-size: 16px;
+        }
+        
+        .control-group {
+            margin-bottom: 15px;
+        }
+        
+        .control-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        
+        .slider {
+            width: 100%;
+            margin: 5px 0;
+        }
+        
+        .checkbox-label {
+            display: flex !important;
+            align-items: center;
+            cursor: pointer;
+        }
+        
+        .checkbox-label input[type="checkbox"] {
+            margin-right: 8px;
+        }
+        
+        .form-control {
+            width: 100%;
+            padding: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 4px;
+            color: white;
+        }
+        
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        
+        .btn--primary {
+            background: #4fc3f7;
+            color: white;
+        }
+        
+        .btn--primary:hover {
+            background: #29b6f6;
+        }
+        
+        /* Responsywność */
+        @media (max-width: 768px) {
+            .wind-controls {
+                padding: 10px;
+            }
+            
+            .notification {
+                max-width: 250px;
+                padding: 8px 15px;
+                font-size: 14px;
+            }
+            
+            .wind-info-panel {
+                font-size: 11px !important;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Header/Navigation -->
+    <header class="header" id="header">
+        <nav class="container nav">
+            <div class="nav__brand">
+                <h2>Environmental Analytics</h2>
+            </div>
+            
+            <div class="nav__menu" id="nav-menu">
+                <ul class="nav__list">
+                    <li class="nav__item"><a href="#dashboard" class="nav__link">Dashboard</a></li>
+                    <li class="nav__item"><a href="#flood" class="nav__link">Symulacje Powodzi</a></li>
+                    <li class="nav__item"><a href="#wind" class="nav__link">Analizy Wiatru</a></li>
+                    <li class="nav__item"><a href="#thermal" class="nav__link">Komfort Termiczny</a></li>
+                    <li class="nav__item"><a href="#portfolio" class="nav__link">Portfolio</a></li>
+                    <li class="nav__item"><a href="#blog" class="nav__link">Blog</a></li>
+                    <li class="nav__item"><a href="#contact" class="nav__link">Kontakt</a></li>
+                </ul>
+                
+                <button class="theme-toggle" id="theme-toggle">
+                    <i class="fas fa-moon"></i>
+                </button>
+            </div>
+            
+            <div class="nav__toggle" id="nav-toggle">
+                <i class="fas fa-bars"></i>
+            </div>
+        </nav>
+    </header>
+
+    <!-- Main Dashboard -->
+    <section class="dashboard section" id="dashboard">
+        <div class="container">
+            <div class="hero">
+                <h1 class="hero__title">Analiza Danych Środowiskowych</h1>
+                <p class="hero__subtitle">Symulacje, Wizualizacje i Rozwiązania Geoprzestrzenne</p>
+            </div>
+            
+            <!-- Weather Widget -->
+            <div class="weather-widget" id="weather-widget">
+                <div class="weather-widget__header">
+                    <h3>Aktualne Warunki Pogodowe</h3>
+                    <span class="weather-widget__location" id="weather-location">Warszawa</span>
+                </div>
+                <div class="weather-widget__content">
+                    <div class="weather-item">
+                        <i class="fas fa-thermometer-half"></i>
+                        <span class="weather-value" id="temperature">22.5°C</span>
+                        <span class="weather-label">Temperatura</span>
+                    </div>
+                    <div class="weather-item">
+                        <i class="fas fa-tint"></i>
+                        <span class="weather-value" id="humidity">65%</span>
+                        <span class="weather-label">Wilgotność</span>
+                    </div>
+                    <div class="weather-item">
+                        <i class="fas fa-compress-arrows-alt"></i>
+                        <span class="weather-value" id="pressure">1013.2 hPa</span>
+                        <span class="weather-label">Ciśnienie</span>
+                    </div>
+                    <div class="weather-item">
+                        <i class="fas fa-wind"></i>
+                        <span class="weather-value" id="wind-speed">12.8 km/h</span>
+                        <span class="weather-label">Wiatr</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Wind Analysis Section -->
+    <section class="section wind-section" id="wind">
+        <div class="container">
+            <h2 class="section__title">Zaawansowane Analizy Wiatru</h2>
+            <p class="section__subtitle">Wizualizacje CFD przepływu powietrza z dynamicznymi streamlines i animacjami strzałek</p>
+            
+            <div class="simulation-container">
+                <!-- Kontrolki wiatru -->
+                <div class="floating-panel wind-controls">
+                    <h4><i class="fas fa-wind"></i> Parametry Wizualizacji</h4>
+                    
+                    <div class="control-group">
+                        <label for="wind-scenario">Scenariusz</label>
+                        <select id="wind-scenario" class="form-control">
+                            <option value="0">Wiatr miejski - dzień</option>
+                            <option value="1">Silny wiatr - burza</option>
+                        </select>
+                    </div>
+                    
+                    <div class="control-group">
+                        <label>Prędkość: <span id="wind-speed-display">8.5</span> m/s</label>
+                        <input type="range" id="wind-speed-slider" min="0" max="30" value="8.5" step="0.1" class="slider">
+                    </div>
+                    
+                    <div class="control-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="show-particles" checked>
+                            <span>Pokaż cząstki</span>
+                        </label>
+                    </div>
+                    
+                    <div class="control-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="show-vectors">
+                            <span>Pokaż wektory</span>
+                        </label>
+                    </div>
+                    
+                    <div class="control-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="show-streamlines" checked>
+                            <span>Animowane streamlines</span>
+                        </label>
+                    </div>
+                    
+                    <div class="control-group">
+                        <button id="toggle-animation" class="btn btn--primary">
+                            <i class="fas fa-play"></i> Przełącz animację
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Mapa wiatru -->
+                <div id="wind-map" class="map-container"></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Loading Spinner -->
+    <div class="loading-spinner hidden" id="loading-spinner">
+        <div class="spinner"></div>
+        <p>Ładowanie danych...</p>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="app-fixed.js"></script>
+    
+    <script>
+        // Dodatkowe funkcje obsługi kontrolek
+        document.addEventListener('DOMContentLoaded', function() {
+            // Obsługa przycisku animacji
+            const toggleBtn = document.getElementById('toggle-animation');
+            if (toggleBtn) {
+                toggleBtn.addEventListener('click', function() {
+                    // Ta funkcja zostanie podłączona do warstwy streamlines
+                    console.log('Toggle animation clicked');
+                });
+            }
+            
+            // Obsługa sliderów
+            const windSpeedSlider = document.getElementById('wind-speed-slider');
+            const windSpeedDisplay = document.getElementById('wind-speed-display');
+            
+            if (windSpeedSlider && windSpeedDisplay) {
+                windSpeedSlider.addEventListener('input', function() {
+                    windSpeedDisplay.textContent = this.value;
+                });
+            }
+            
+            // Obsługa checkboxów warstw
+            const checkboxes = ['show-particles', 'show-vectors', 'show-streamlines'];
+            checkboxes.forEach(id => {
+                const checkbox = document.getElementById(id);
+                if (checkbox) {
+                    checkbox.addEventListener('change', function() {
+                        console.log(`${id}: ${this.checked}`);
+                        // Tutaj będzie logika pokazywania/ukrywania warstw
+                    });
+                }
+            });
+        });
+    </script>
+</body>
+</html>
