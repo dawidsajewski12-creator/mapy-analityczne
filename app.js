@@ -119,11 +119,11 @@ function createWindDataAdapter(rawWindData) {
         
         // NOWE: Użyj prawdziwych współrzędnych dla particles
         particles: rawWindData.particles.length > 0 ? 
-            rawWindData.particles[0].map(particle => ({
-                ...particle,
-                lat: particle.latitude,   // NOWE: użyj prawdziwych współrzędnych
-                lng: particle.longitude
-            })) : [],
+            rawWindData.particles.flatMap(path => path.map(particle => ({
+            ...particle,
+            lat: particle.latitude,
+            lng: particle.longitude
+        }))) : [],
         
         // NOWE: Użyj prawdziwych współrzędnych dla vector field
         vectorField: rawWindData.vector_field.map(vector => ({
