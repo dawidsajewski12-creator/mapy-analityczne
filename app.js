@@ -211,7 +211,7 @@ const AdvancedVelocityLayer = L.Layer.extend({
 const AdvancedWindAnimationLayer = L.Layer.extend({
     initialize: function(data, bounds) {
         this._data = data;
-        this._bounds = L.latLngBounds(bounds);
+        this.bounds = bounds;
         this._particles = [];
         this._animationFrame = null;
     },
